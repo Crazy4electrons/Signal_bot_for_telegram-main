@@ -1,0 +1,126 @@
+:root{
+    --primary-color: #0000ff;
+    --secondary-color: #8cb102;
+    --background-color: #c5fef9;
+    --background-color-accent: #031c36;
+    --text-color: #2b0040;
+    --text-color-accent: #ffc0ee;
+    --header-color: #346200;
+    --title-color: #d18c14;
+    --shadow-color:#007269d0;
+    --section-color: #9f51ff12;
+
+}
+
+*{
+    box-sizing: border-box;
+    background-clip: border-box;
+}
+
+
+body {
+    font-family: Arial, Helvetica, sans-serif;
+    margin: 16px;
+    color: #222;    
+}
+
+header{
+background-color: var(--header-color);
+    margin: 0 0 20px 0;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    justify-content: space-between;
+    align-items: center;
+    color: var(--title-color);
+    padding: 0 20px;
+    border-radius: 25px;
+    box-shadow: 0px 0px 9px var(--shadow-color);
+}
+
+header button {
+    font-size: 18px;
+    padding: 6px 6px;
+    border: none;
+    border-radius: 100%;
+    background-color: var(--secondary-color);
+    color: white;
+    cursor: pointer;
+}
+
+section {
+        padding: 8px;
+        border: 1px solid var(--secondary-color);
+        border-radius: 6px;
+        background: var(--section-color);
+        display: flex;
+        flex-direction: column;
+        flex-wrap: wrap;
+        align-content: space-between;
+        justify-content: space-around;
+        align-items: flex-start;margin: 12px 0;
+}
+
+.card {
+    box-shadow: 0px 0px 9px var(--shadow-color);
+    background-color: var(--background-color-accent);
+    color: var(--text-color-accent);
+    padding: 12px;
+    border-radius: 12px; 
+    border: 1px solid var(--secondary-color);
+    margin: 12px 0;
+}
+.card-title {
+    font-size: 20px;
+    font-weight: bold;
+    color: var(--header-color);
+    background-color: var(--secondary-color);
+    padding: 10px;
+    border-radius: 10px;
+    margin-top: 1px;
+    box-shadow: 0px 0px 9px var(--shadow-color), inset -6px 6px 14px -5px #ffffff;
+}
+.card-horizontal {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+   
+}
+.card-display-text {
+    font-size: 16px;
+    font-weight: normal;
+    color: var(--text-color);
+    margin: 5px;
+}
+
+
+
+
+
+
+
+.trade,
+.signal {
+    padding: 6px 4px;
+    border-bottom: 1px dashed #ddd;
+}
+
+.trade:last-child,
+.signal:last-child {
+    border-bottom: none;
+}
+
+.empty {
+    color: #666;
+}
+
+.error {
+    color: #b00;
+}
+
+.info {
+    color: #066;
+}

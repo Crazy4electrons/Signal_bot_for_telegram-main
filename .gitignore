@@ -1,0 +1,17 @@
+shared_data
+browser_profiles
+.env
+__pycache__
+ssid.txt
+.vscode
+.conda
+.venv
+__pycache__
+telegram_bot.py
+*.pyc
+.ipynb_checkpoints
+.DS_Store
+logs
+*.log
+uv.lock
+BinaryOptionsTools-v2

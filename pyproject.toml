@@ -1,0 +1,24 @@
+[project]
+name = "Po_signal_bot_2"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "aiohappyeyeballs",
+    "aiohttp",
+    "fastapi",
+    "loguru",
+    "pocketoptionapi-async",
+    "python-dotenv",
+    "python-telegram-bot",
+    "pytz",
+    "requests",
+    "selenium",
+    "telegram",
+    "uvicorn",
+    "webdriver-manager",
+    "websockets==11.0",
+    "binaryoptionstoolsv2==0.2.1",
+    "maturin"
+]

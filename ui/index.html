@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width,initial-scale=1" />
+	<title>Signal Bot UI</title>
+	<link rel="stylesheet" href="/ui/styles.css" />
+	<!-- Placeholder favicon (inline SVG data URI) -->
+	<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Crect%20width='100'%20height='100'%20fill='%23007acc'/%3E%3Ctext%20x='50'%20y='65'%20font-size='60'%20text-anchor='middle'%20fill='white'%20font-family='Arial'%3ES%3C/text%3E%3C/svg%3E" />
+
+
+</head>
+<body>
+	<header>
+		<h1>Signal Bot Dashboard</h1>
+        <button type="button">🌚</button>
+	</header>
+	<section id="account">
+        <h2 class="card-title"><span id="account-type" >Demo</span> Account</h2>
+        <div class="card-horizontal" class="card">
+            <div class="card-display-text">Balance: <span id="balance-result">—</span></div>
+            <div class="card-display-text">Daily P/L: <span id="P_n_L_day-result">—</span></div>
+            <div class="card-display-text">Lifespan: <span id="lifespan-result">—</span></div>
+        </div>
+
+	</section>
+	<section id="open-trades">
+		<h2 class="card-title">Open Trades</h2>
+		<div id="open-trades-result">Loading...</div>
+	</section>
+
+	<section id="current-signals">
+		<h2 class="card-title">Current Signals</h2>
+		<div id="current-signals-result">Loading...</div>
+	</section>
+
+	<section id="closed-trades">
+		<h2 class="card-title">Closed Trades</h2>
+		<div id="closed-trades-result">Loading...</div>
+	</section>
+
+    <section id="risk">
+		<h2>Risk</h2>
+		<div id="risk-result">—</div>
+	</section>
+
+	<script src="/ui/script.js" defer></script>
+</body>
+</html>
