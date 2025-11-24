@@ -21,7 +21,7 @@ from measure_latency import measure_one
 
 load_dotenv()
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 
@@ -38,9 +38,12 @@ class TRADE_DETAILS(BaseModel):
     full_details: dict
 
 class OPEN_TRADES(BaseModel):
-    trades: list = [dict]
+    # store open trade details in a list
+    trades: dict = Field(default_factory=dict)
+
 class SIGNAL_DETAILS(BaseModel):
-    Signals: dict = {}
+    # map Tsid to signal details
+    Signals: dict = Field(default_factory=dict)
     def add_new_signal(self,signal_provider:str,entry_time:datetime,direction:str)->dict:
         Tsid = str(f"{signal_provider}{entry_time}")
         if Tsid in self.Signals:
@@ -200,9 +203,9 @@ async def get_account_details():
     jsonResponse = JSONResponse(status_code= status.HTTP_200_OK,content={"balance": balance,"P_n_L_day": P_n_L_day, "lifespan": lifespan})
     return jsonResponse
 
-@app.get("/open_trades/", response_class=JSONResponse)
+@app.get("/open_trades", response_class=JSONResponse)
 async def get_open_trades():
-    global api
+    global api,open_trades,risk_managment
     # Ensure integer values are passed to get_candles (period and offset must be ints)
     period = int(risk_managment.timeframe) // 60
     if period <= 0:
@@ -210,46 +213,54 @@ async def get_open_trades():
     offset = period * 10
         
     try:
-        open_trades = await api.opened_deals()
-        print(open_trades)
+        openTrades = await api.opened_deals()
         trades_list = []
         # handle dict or list responses from the API
-        if isinstance(open_trades, dict):
-            for tid, data in open_trades.items():
+        if isinstance(openTrades, dict):
+            for tid, data in openTrades.items():
                 if not isinstance(data, dict):
                     continue
+                # print(open_trades.trades[data.get("id")])
                 trades_list.append({
                     "trade_id": data.get("id"),
                     "asset": data.get("asset"),
                     "amount": data.get("amount"),
-                    "direction": data.get("direction"),
+                    "direction": open_trades.trades.get(data.get("id"), {}).get("direction"),
                     "profit": data.get("profit"),
-                    "openedTime": data.get("openedTime"),
-                    "closedTime": data.get("closedTime"),
+                    "openedTime": data.get("openTime"),
                     "open_price": data.get("openPrice"),
+                    # current_price may be non-serializable depending on API; include as-is and let caller handle
                     "current_price": await api.get_candles(data.get("asset"), period, offset) #type: ignore
                 })
-        elif isinstance(open_trades, list):
-            for data in open_trades:
+        elif isinstance(openTrades, list):
+            for data in openTrades:
                 if not isinstance(data, dict):
                     continue
+                print(open_trades.trades[data.get("id")])
                 trades_list.append({
                     "trade_id": data.get("id"),
                     "asset": data.get("asset"),
                     "amount": data.get("amount"),
-                    "direction": data.get("direction"),
+                    "direction": open_trades.trades.get(data.get("id"), {}).get("direction"),
                     "profit": data.get("profit"),
-                    "openedTime": data.get("openedTime"),
-                    "closedTime": data.get("closedTime")
+                    "openedTime": data.get("openTime"),
+                    # "closedTime": data.get("closedTime"),
+                    "current_price": await api.get_candles(data.get("asset"), period, offset) #type: ignore
                 })
         else:
-            # fallback: try to coerce to string
-            trades_list.append({"raw": str(open_trades)})
+            # fallback: return raw string representation inside a list so content is JSON-serializable
+            trades_list.append({"raw": str(openTrades)})
 
+        # Return a dict mapping key -> list (avoid using {openTrades} which creates a set)
         return JSONResponse(status_code=status.HTTP_200_OK, content={"open_trades": trades_list})
     except (Exception, KeyboardInterrupt) as e:
         logger.error(f"Error fetching open trades: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error fetching open trades: {e}")
+
+@app.get("/current_signals", response_class=JSONResponse)
+async def get_current_signals():
+    global Signals
+    return JSONResponse(status_code= status.HTTP_200_OK,content={f"message": f"Current signals: {Signals}"})
 
 @app.post("/set_risk_managment", response_class=JSONResponse  )
 async def set_risk_managment(Risk: RISK_MANAGEMENT):
@@ -368,17 +379,16 @@ async def trade_signal_webhook(request: Request)->JSONResponse:
         direction=direction.upper(),
         full_details=Details
     )
+    open_trades.trades[buy_id] = {
+        "direction": direction.upper(),
+        "Full_details": Details
+    }
     try:
         asyncio.create_task(manage_martingale(trade_details=trade_details))
     except (Exception,KeyboardInterrupt) as e:
         logger.error(f"Error managing martingale for trade {buy_id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail={"message": f"Error managing martingale: {e}"})
     return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Trade signal received and processed successfully."})
-
-@app.post("/")
-async def root():
-    
-    return 
 async def manage_martingale(trade_details: TRADE_DETAILS):
     
     global api,risk_managment,account_details
@@ -391,6 +401,7 @@ async def manage_martingale(trade_details: TRADE_DETAILS):
         result = status["result"]
     except (Exception,KeyboardInterrupt) as e:
         logger.error(f"Error checking trade result for {trade_id}: {e}", exc_info=True)
+        open_trades.trades.pop(trade_id)
         raise e
     print(status)
     if result.upper() == "LOSS":
@@ -400,6 +411,7 @@ async def manage_martingale(trade_details: TRADE_DETAILS):
         if trade_details.level > risk_managment.martingale_levels:
             logger.warning(f"Max martingale levels reached for trade {trade_id}. Ending martingale sequence.")
             Signals.remove_signal(Tsid=trade_details.Tsid)
+            open_trades.trades.pop(trade_id)
             trade_details.level = 0
             del trade_details
             return False
@@ -421,8 +433,15 @@ async def manage_martingale(trade_details: TRADE_DETAILS):
                     time= risk_managment.timeframe, 
                     check_win=False )
             trade_details.full_details = Details
+            open_trades.trades[buy_id]=    open_trades.trades[buy_id] = {
+                "direction":open_trades.trades[trade_id]["direction"].upper(),
+                "Full_details": Details
+                }
+            open_trades.trades.pop(trade_id)
+                
         except (Exception,KeyboardInterrupt) as e:
             logger.error(f"Error placing martingale trade for {trade_details.full_details['asset']} {trade_details.direction}: {e}", exc_info=True)
+            open_trades.trades.pop(trade_id)
             raise e
         logger.info(f"\n\n======Martingale Trade placed successfully.=======\n -Trade ID: {buy_id}\n-Details: {Details}\n\n")
         asyncio.create_task(manage_martingale(trade_details=trade_details))
@@ -434,6 +453,7 @@ async def manage_martingale(trade_details: TRADE_DETAILS):
         account_details.P_n_L_day = account_details.P_n_L_day + status["profit"]
         account_details.lifespan = account_details.lifespan + status["profit"]
         Signals.remove_signal(Tsid=trade_details.Tsid)
+        open_trades.trades.pop(trade_id)
         del trade_details
         return True
     

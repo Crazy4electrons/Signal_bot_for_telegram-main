@@ -22,7 +22,7 @@ async function updateBalance() {
 }
 async function updateOpenTrades() {
     try {
-        let res = await fetch('/open_trades/');
+        let res = await fetch('/open_trades');
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         let data = await res.json();
         const trades = data.open_trades || [];
@@ -30,24 +30,59 @@ async function updateOpenTrades() {
             openTradesElements.innerHTML = '<div class="empty">No open trades</div>';
             return;
         }
+
         console.log('Open trades data:', trades);
-        openTradesElements.innerHTML ="<table class=\"table-view\""
-        +"<thead><tr><th>Direction</th><th>Asset</th><th>Amount</th><th>points</th><th>Profit</th><th>total returns</th><th>opened time</th></tr></thead><tbody>" + trades.map(t => {
-            if(t.open_price < t.current_price[-1]['close']){}
-                point= t.current_price[-1]['close'] - t.open_price
+
+        let html = `<table class="trades-table"><thead><tr><th>Direction</th><th>Asset</th><th>Amount</th><th>Open Price</th><th>Points</th><th>Profit</th><th>Total Returns</th><th>Opened time</th></tr></thead><tbody>`;
+        html += trades.map(t => {
+            // support both naming schemes (current_price or currentPrice)
+            const priceArray = Array.isArray(t.current_price) ? t.current_price : (Array.isArray(t.currentPrice) ? t.currentPrice : []);
+            const lastPriceObj = priceArray.length ? priceArray[priceArray.length - 1] : null;
+
+            // robust last-close extraction with fallbacks
+            const lastClose = lastPriceObj
+                ? (typeof lastPriceObj.close !== 'undefined' && lastPriceObj.close !== null ? Number(lastPriceObj.close)
+                    : (typeof lastPriceObj.c !== 'undefined' && lastPriceObj.c !== null ? Number(lastPriceObj.c)
+                    : (typeof lastPriceObj.price !== 'undefined' && lastPriceObj.price !== null ? Number(lastPriceObj.price)
+                    : (typeof lastPriceObj.open !== 'undefined' && lastPriceObj.open !== null ? Number(lastPriceObj.open) : NaN))))
+                : (typeof t.current_price === 'number' ? Number(t.current_price) : (typeof t.currentPrice === 'number' ? Number(t.currentPrice) : NaN));
+
+            const openPrice = t.openPrice !== undefined ? Number(t.openPrice) : (t.open_price !== undefined ? Number(t.open_price) : NaN);
+            const amount = (t.amount !== undefined && t.amount !== null) ? t.amount : '—';
+            const profit = (t.profit !== undefined && t.profit !== null) ? t.profit : '—';
+
+            // compute points safely using the lastClose value
+            let pointsHtml = '—';
+            if (!isNaN(lastClose) && !isNaN(openPrice)) {
+                const diff = lastClose - openPrice;
+                const formatted = Math.abs(Math.round(diff * 100000) / 100000); // optional formatting
+                if (t.direction === "BUY") {
+                    pointsHtml = diff >= 0 ? `<span style="color:green;">${formatted}</span>` : `<span style="color:red;">${formatted}</span>`;
+                } else if (t.direction === "SELL") {
+                    pointsHtml = diff >= 0 ? `<span style="color:green;">${formatted}</span>` : `<span style="color:red;">${formatted}</span>`;
+                } else {
+                    pointsHtml = String(formatted);
+                }
+            }
+
+            const totalReturns = (typeof amount === 'number' && typeof profit === 'number') ? (amount + profit) : (amount === '—' || profit === '—' ? '—' : `${amount}+${profit}`);
+
             return `
                 <tr class="trade">
                     <td>${t.direction ?? ''}</td>
                     <td>${t.asset ?? '—'}</td>
-                    <td>${t.amount ?? '—'}</td>
-                    <td>${t.openPrice-t.cur ?? '—'}</td>
-                    <td>${t.profit ?? '—'}</td>
-                    <td>${t.total_returns ?? '—'}</td>
+                    <td>${amount}</td>
+                    <td>${isNaN(openPrice) ? '—' : openPrice}</td>
+                    <td>${pointsHtml}</td>
+                    <td>${profit}</td>
+                    <td>${totalReturns}</td>
                     <td>${t.openedTime ?? '—'}</td>
                 </tr>
             `;
+        }).join('');
+        html += '</tbody></table>';
 
-        }).join('')+ "</div>";
+        openTradesElements.innerHTML = html;
     } catch (error) {
         console.error('Error fetching open trades:', error);
         openTradesElements.innerHTML = '<div class="error">Error loading open trades</div>';
