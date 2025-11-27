@@ -9,7 +9,6 @@ dependencies = [
     "aiohttp",
     "fastapi",
     "loguru",
-    "pocketoptionapi-async",
     "python-dotenv",
     "python-telegram-bot",
     "pytz",
@@ -20,5 +19,5 @@ dependencies = [
     "webdriver-manager",
     "websockets==11.0",
     "binaryoptionstoolsv2==0.2.1",
-    "maturin"
+    "maturin",
 ]
