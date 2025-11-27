@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 # --- Configuration ---
 # IMPORTANT: Replace this with your actual Ngrok HTTPS URL
 # ngrok_url = None
-WEBHOOK_URL = "http://localhost:3000/trade_signal" # e.g., "https://abcdef12345.ngrok-free.app/trade_signal"
 # --- End Configuration ---
 
 # Base notification template
@@ -75,7 +74,7 @@ def get_next_5min_interval_time(current_time_str=None):
     return next_time.strftime("%H:%M")
 
 
-def send_test_signal(asset_pair:str,direction_text:str|None = None):
+def send_test_signal(asset_pair:str,direction_text:str,signal_provider:str,port:str):
     """
     Prompts user for signal details, constructs notification, and sends it.
     """
@@ -98,14 +97,14 @@ def send_test_signal(asset_pair:str,direction_text:str|None = None):
         entry_time=entry_time,
         direction_emoji=direction_emoji,
         direction_text=direction_text,
-        signal_provider="john_doe",
-        timezone="Etc/GMT+4"
+        signal_provider=signal_provider,
+        timezone="Etc/GMT-2"
     ).strip()
 
     print("\n--- Generated Notification Content ---")
     print(notification_content)
     print("------------------------------------")
-
+    WEBHOOK_URL = f"http://localhost:{port}/trade_signal"
     try:
         print(f"Sending POST request to: {WEBHOOK_URL}")
         response = requests.post(WEBHOOK_URL, data=notification_content, headers={'Content-Type': 'text/plain'})
@@ -126,16 +125,17 @@ def send_test_signal(asset_pair:str,direction_text:str|None = None):
 
 if __name__ == "__main__":
     print("Welcome to the Signal Test Sender!")
-    print(f"Signals will be sent to: {WEBHOOK_URL}")
     print("Make sure your `trader.py` and Ngrok are running.")
     asset_pair = input("Enter Asset Pair (e.g., EUR/USD): ").strip().upper()
     direction_text = input("Enter Direction (BUY or SELL): ").strip().upper()
-    send_test_signal(asset_pair=asset_pair,direction_text=direction_text)
+    signal_provider = input("Enter Signal Provider: ").strip()
+    port = input("Enter Port (default 3000): ").strip() or "3000"
+    print(f"Signals will be sent to: http://localhost:{port}/trade_signal")
+    send_test_signal(asset_pair=asset_pair,direction_text=direction_text,signal_provider=signal_provider,port=port)
     while True:
-        
         choice = input("\nSend same signal with different time? (y/n): ").strip().lower()
         if choice != 'y':
             break
-        send_test_signal(asset_pair=asset_pair,direction_text=direction_text)
+        send_test_signal(asset_pair=asset_pair,direction_text=direction_text,signal_provider=signal_provider,port=port)
 
     print("Exiting test sender.")

@@ -22,9 +22,14 @@ async function updateBalance() {
 }
 async function updateOpenTrades() {
     try {
-        let res = await fetch('/open_trades');
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        // const controller = new AbortController();
+        // const signal = controller.signal;
+        // const timeoutId = setTimeout(() => controller.abort(), 5000);
+        console.log('Fetching open trades...');
+        let res = await fetch('/open_trades'/*,{method:"GET",signal}*/);
+        if (!res.ok){ /*;throw new Error*/(`HTTP ${res.status}`) ;};
         let data = await res.json();
+        // clearTimeout(timeoutId);
         const trades = data.open_trades || [];
         if (!trades.length) {
             openTradesElements.innerHTML = '<div class="empty">No open trades</div>';
@@ -33,42 +38,50 @@ async function updateOpenTrades() {
 
         console.log('Open trades data:', trades);
 
-        let html = `<table class="trades-table"><thead><tr><th>Direction</th><th>Asset</th><th>Amount</th><th>Open Price</th><th>Points</th><th>Profit</th><th>Total Returns</th><th>Opened time</th></tr></thead><tbody>`;
+        let html = `<table class="trades-table table"><thead><tr><th>Direction</th><th>Asset</th><th>Amount</th><th>Open Price</th><th>Points</th><th>Profit</th><th>Total Returns</th><th>Opened time</th></tr></thead><tbody>`;
         html += trades.map(t => {
             // support both naming schemes (current_price or currentPrice)
             const priceArray = Array.isArray(t.current_price) ? t.current_price : (Array.isArray(t.currentPrice) ? t.currentPrice : []);
             const lastPriceObj = priceArray.length ? priceArray[priceArray.length - 1] : null;
-
+            // console.log('Last price object for trade:', lastPriceObj);
             // robust last-close extraction with fallbacks
-            const lastClose = lastPriceObj
+            let lastClose = lastPriceObj
                 ? (typeof lastPriceObj.close !== 'undefined' && lastPriceObj.close !== null ? Number(lastPriceObj.close)
                     : (typeof lastPriceObj.c !== 'undefined' && lastPriceObj.c !== null ? Number(lastPriceObj.c)
                     : (typeof lastPriceObj.price !== 'undefined' && lastPriceObj.price !== null ? Number(lastPriceObj.price)
                     : (typeof lastPriceObj.open !== 'undefined' && lastPriceObj.open !== null ? Number(lastPriceObj.open) : NaN))))
                 : (typeof t.current_price === 'number' ? Number(t.current_price) : (typeof t.currentPrice === 'number' ? Number(t.currentPrice) : NaN));
-
-            const openPrice = t.openPrice !== undefined ? Number(t.openPrice) : (t.open_price !== undefined ? Number(t.open_price) : NaN);
+            // console.log(`Extracted last close price: ${lastClose}`);
+            let openPrice = t.openPrice !== undefined ? Number(t.openPrice) : (t.open_price !== undefined ? Number(t.open_price) : NaN);
             const amount = (t.amount !== undefined && t.amount !== null) ? t.amount : '—';
             const profit = (t.profit !== undefined && t.profit !== null) ? t.profit : '—';
-
+            // console.log(`Trade details - Open Price: ${openPrice}, Amount: ${amount}, Profit: ${profit}`);
             // compute points safely using the lastClose value
             let pointsHtml = '—';
+            console.log(`Calculating points for trade. Last Close: ${lastClose}, Open Price: ${openPrice}, Direction: ${t.direction}`);
             if (!isNaN(lastClose) && !isNaN(openPrice)) {
-                const diff = lastClose - openPrice;
-                const formatted = Math.abs(Math.round(diff * 100000) / 100000); // optional formatting
+                lastClose = lastClose;
+                openPrice = openPrice;
                 if (t.direction === "BUY") {
+                    const diff = lastClose - openPrice;
+                    const formatted =Math.abs(Math.round(diff*10000)); // optional formatting
                     pointsHtml = diff >= 0 ? `<span style="color:green;">${formatted}</span>` : `<span style="color:red;">${formatted}</span>`;
                 } else if (t.direction === "SELL") {
+                    const diff = openPrice-lastClose ;
+                    const formatted = Math.abs(Math.round(diff/10000)); // optional formatting
                     pointsHtml = diff >= 0 ? `<span style="color:green;">${formatted}</span>` : `<span style="color:red;">${formatted}</span>`;
                 } else {
+                    const diff = lastClose - openPrice;
+                    const formatted  =Math.abs(Math.round(diff/10000)); // optional formatting
                     pointsHtml = String(formatted);
                 }
             }
-
+            // console.log(`Calculated points HTML: ${pointsHtml}`);
             const totalReturns = (typeof amount === 'number' && typeof profit === 'number') ? (amount + profit) : (amount === '—' || profit === '—' ? '—' : `${amount}+${profit}`);
 
+            console.log('Processed trade:', t);
             return `
-                <tr class="trade">
+                <tr>
                     <td>${t.direction ?? ''}</td>
                     <td>${t.asset ?? '—'}</td>
                     <td>${amount}</td>
@@ -80,9 +93,10 @@ async function updateOpenTrades() {
                 </tr>
             `;
         }).join('');
+        // console.log('Final HTML for open trades table:', html);
         html += '</tbody></table>';
-
         openTradesElements.innerHTML = html;
+        console.log('Open trades HTML updated.');
     } catch (error) {
         console.error('Error fetching open trades:', error);
         openTradesElements.innerHTML = '<div class="error">Error loading open trades</div>';
@@ -91,26 +105,40 @@ async function updateOpenTrades() {
 async function updateCurrentSignals() {
     try {
         let res = await fetch('/current_signals');
-        if (res.status === 404) {
-            currentSignalsElements.innerHTML = '<div class="info">No current-signals endpoint available on server.</div>';
-            return;
-        }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         let data = await res.json();
-        let items = [];
-        if (Array.isArray(data.signals)) items = data.signals;
-        else if (data.Signals && typeof data.Signals === 'object') items = Object.values(data.Signals);
-        else if (Array.isArray(data)) items = data;
-        if (!items.length) {
-            currentSignalsElements.innerHTML = '<div class="empty">No active signals</div>';
+        const signals = data.signals || {};
+        if (!signals.length) {
+            currentSignalsElements.innerHTML = '<div class="empty">No current signals</div>';
             return;
         }
-        currentSignalsElements.innerHTML = items.map(s => {
-            const provider = s.signal_provider ?? s.provider ?? s.source ?? '—';
-            const entry = s.entry_time ?? s.entryTime ?? s.entry ?? '';
-            const dir = s.direction ?? '';
-            return `<div class="signal"><strong>${provider}</strong> — ${dir} @ ${entry}</div>`;
+        console.log('Current signals data:', signals);
+        let html = `<table class="signals-table table"><thead><tr><th>Signal provider</th><th>Asset</th><th>Direction</th><th>Entry time</th></tr></thead><tbody>`;
+        html += signals.map(signal=> {
+            const signal_provider = (signal.signal_provider !== undefined && signal.signal_provider !== null) ? signal.signal_provider : '—';
+            const asset = (signal.asset !== undefined && signal.asset !== null) ? signal.asset : '—';
+            const entry_time = (signal.entry_time !== undefined && signal.entry_time !== null) ? signal.entry_time : '—';
+            let direction = '—';
+            if (signal.direction !== undefined && signal.direction !== null) {
+                if (signal.direction.toUpperCase() === 'BUY') {
+                    direction = '<span style="color:green;">BUY</span>';
+                } else if (signal.direction.toUpperCase() === 'SELL') {
+                    direction = '<span style="color:red;">SELL</span>';
+                }
+            }
+            return `
+                <tr>
+                    <td>${signal_provider}</td>
+                    <td>${asset}</td>
+                    <td>${direction}</td>
+                    <td>${entry_time}</td>
+                </tr>
+            `;
+
         }).join('');
+        html += '</tbody></table>';
+
+        currentSignalsElements.innerHTML = html;
     } catch (error) {
         console.error('Error fetching current signals:', error);
         currentSignalsElements.innerHTML = '<div class="error">Error loading current signals</div>';
@@ -153,7 +181,7 @@ async function updateClosedTrades() {
 }
 async function updateRiskData() {
     try {
-        let res = await fetch('/get_risk_managment', { method: 'POST' });
+        let res = await fetch('/get_risk_management', { method: 'POST' });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         let data = await res.json();
         const msg = data.message ?? JSON.stringify(data);
