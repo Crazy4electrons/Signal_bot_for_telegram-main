@@ -20,4 +20,5 @@ dependencies = [
     "websockets==11.0",
     "binaryoptionstoolsv2==0.2.1",
     "maturin",
+    "rich>=14.2.0",
 ]

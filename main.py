@@ -1,31 +1,26 @@
-import os
-import json
 import asyncio
-import logging
 import pytz
 from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
-# from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from typing import Optional, AsyncIterator, Any
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from BinaryOptionsToolsV2.pocketoption import PocketOptionAsync
 from parse_data import parse_macrodroid_trade_data
-import copy
-from collections import defaultdict
-import asyncio
-# import traceback
-from typing import  AsyncIterator
-load_dotenv()
-
+import os
 from pydantic import BaseModel, Field
 
+from rich.logging import RichHandler
+import logging
 
+load_dotenv()
 
+logging.basicConfig(level="DEBUG", handlers=[RichHandler()])
+logger = logging.getLogger("PO_Signal")
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 class RISK_MANAGEMENT(BaseModel):
     initial_amount: float = 1
     martingale_levels: int = 3
@@ -34,128 +29,38 @@ class RISK_MANAGEMENT(BaseModel):
     timeframe:  int = 300
     local_timezone: str = 'Etc/GMT-2'
 
-
-
-class TRADE_DETAILS(BaseModel):
-    trades: dict = Field(default_factory=dict)
-    def __init__(self, **data):
-        super().__init__(**data)
-        # async lock to protect trades dict
-        self._lock = asyncio.Lock()
-
-    async def add_trade(self, trade_id: str, trade_data: dict) -> str | None:
-        entry_time = trade_data.get("openTimestamp") or trade_data.get("entryTime")
-        detail = {
-            "Tsid": trade_data["Tsid"],
-            "direction": trade_data["direction"],
-            "amount": trade_data["amount"],
-            "level": trade_data.get("level", 0),
-            "entryTime": entry_time,
-            "asset": trade_data["asset"],
-            "full_details": trade_data,
-        }
-        for field in detail:
-            if detail.get(field) is None:
-                logger.error(f"Missing field {field} in trade_data: {trade_data.keys()}")
-                raise Exception(f"Missing trade detail field: {field}")
-        async with self._lock:
-            self.trades[trade_id] = copy.deepcopy(detail)
-        return trade_id
-
-    async def get_trade(self, trade_id: str, returnAll: bool = False) -> dict:
-        async with self._lock:
-            try:
-                if returnAll:
-                    return copy.deepcopy(self.trades)
-                return copy.deepcopy(self.trades.get(trade_id, {}))
-            except Exception:
-                return {}
-
-    async def remove_trade(self, trade_id: str) -> dict | None:
-        async with self._lock:
-            if trade_id not in self.trades:
-                raise Exception("Trade ID not found")
-            try:
-                return self.trades.pop(trade_id)
-            except Exception:
-                return None
-
-    async def update_trade(self, old_trade_id: str, trade_id: str, trade_data: dict) -> dict | None:
-        async with self._lock:
-            if old_trade_id not in self.trades:
-                raise Exception("Old trade ID not found")
-            try:
-                # replace old entry atomically
-                self.trades.pop(old_trade_id, None)
-                self.trades[trade_id] = copy.deepcopy(trade_data)
-                return copy.deepcopy(self.trades[trade_id])
-            except Exception as e:
-                logger.error(f"Error updating trade: {e}")
-                return None
-class SIGNAL_DETAILS(BaseModel):
-    Signals: dict = Field(default_factory=dict)
-    def __init__(self, **data):
-        super().__init__(**data)
-        self._lock = asyncio.Lock()
-
-    def _make_tsid(self, signal_provider: str, entry_time: datetime, asset: str) -> str:
-        # deterministic isoformat based Tsid including tz info if present
-        et = entry_time.isoformat() if isinstance(entry_time, datetime) else str(entry_time)
-        return f"{signal_provider}|{et}|{asset}"
-
-    async def add_new_signal(self, signal_provider: str, entry_time: datetime, direction: str, asset: str) -> dict:
-        Tsid = self._make_tsid(signal_provider, entry_time, asset)
-        async with self._lock:
-            if Tsid in self.Signals:
-                return {"error": "Signal already exists"}
-            if signal_provider and entry_time and direction and asset:
-                self.Signals[Tsid] = copy.deepcopy({
-                    "signal_provider": signal_provider,
-                    "entry_time": entry_time,
-                    "direction": direction,
-                    "asset": asset
-                })
-                return {"Tsid": Tsid, "signal": copy.deepcopy(self.Signals[Tsid])}
-            else:
-                return {"error": "Missing required fields"}
-
-    async def get_signal(self, Tsid: str = "", signal_provider: str = "", entry_time: datetime | None = None, asset: str = "", returnAll: bool = False) -> dict | None:
-        async with self._lock:
-            if returnAll:
-                return copy.deepcopy(self.Signals)
-            if Tsid == "":
-                if not signal_provider or entry_time is None or not asset:
-                    return {"error": "Signal not found"}
-                Tsid = self._make_tsid(signal_provider, entry_time, asset)
-            if Tsid not in self.Signals:
-                return {"error": "Signal not found"}
-            return {"Tsid": Tsid, "signal": copy.deepcopy(self.Signals[Tsid])}
-
-    async def remove_signal(self, Tsid: str = "", signal_provider: str = "", entry_time: datetime | None = None, asset: str = "") -> dict | None:
-        async with self._lock:
-            if Tsid == "":
-                if not signal_provider or entry_time is None or not asset:
-                    return {"error": "Signal not found"}
-                Tsid = self._make_tsid(signal_provider, entry_time, asset)
-            if Tsid not in self.Signals:
-                return {"error": "Signal not found"}
-            try:
-                return self.Signals.pop(Tsid)
-            except Exception as e:
-                raise e
-
-
 class ACCOUNT_DETAILS(BaseModel):
-    balance: float|None = None
-    P_n_L_day: float|None = None
-    lifespan: float|None = None
+    balance: float=0.0
+    P_n_L_day: float=0.0
+    lifespan: float=0.0
     async def update_balance(self,api):
         self.balance = await api.balance()
+        
+class TRADE_FIELDS( BaseModel):
+    signal_provider: str
+    asset:str
+    direction:str
+    entry_time:datetime
+    level:int
+    open_price:float
+    amount:float
+class TRADE(BaseModel):
+    trade_id:str
+    trade_details:TRADE_FIELDS
+class SIGNAL_FIELDS(BaseModel):
+    signal_provider: str
+    asset:str
+    direction:str
+    entry_time:datetime
+class SIGNAL(BaseModel):
+    # map Tsid to signal details
+    signal_id:str
+    signal_details:SIGNAL_FIELDS
 
-account_details = ACCOUNT_DETAILS()
-risk_management = RISK_MANAGEMENT()
-Signals = SIGNAL_DETAILS()
-trade_details = TRADE_DETAILS()
+account_details:ACCOUNT_DETAILS = ACCOUNT_DETAILS()
+risk_management:RISK_MANAGEMENT = RISK_MANAGEMENT()
+Signals:dict = {}
+trade_details:dict = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -233,11 +138,7 @@ app = FastAPI(lifespan=lifespan)
 #     allow_methods=["*"],
 #     allow_headers=["*"],
 # )
-
-# Serve the UI folder via HTTP so you can open http://localhost:8000/ui/ instead of loading files via file://
 app.mount("/ui", StaticFiles(directory="ui", html=True), name="ui")
-
-# Replace previous root handlers with this: serve ui/index.html if present
 @app.get("/", response_class=HTMLResponse)
 async def root_index():
     ui_dir = os.path.join(os.path.dirname(__file__), "ui")
@@ -261,22 +162,26 @@ async def ui_styles():
     if os.path.exists(css_path):
         return FileResponse(css_path, media_type="text/css")
     raise HTTPException(status_code=404, detail="styles.css not found")
-    
+
 @app.get("/account_details", response_class=JSONResponse)
 async def get_account_details():
     global api,account_details
     balance = await api.balance()
     if balance <= 0:
-        await api.reconnect()
+        for retries in range(10):
+            await api.reconnect()
+            balance =await api.balance()
+            if balance > 0:
+                break
     account_details.balance = balance
     P_n_L_day = account_details.P_n_L_day
     lifespan  = account_details.lifespan
     jsonResponse = JSONResponse(status_code= status.HTTP_200_OK,content={"balance": balance,"P_n_L_day": P_n_L_day, "lifespan": lifespan})
     return jsonResponse
-    
+
 @app.get("/open_trades", response_class=JSONResponse)
 async def get_open_trades():
-    global api,open_trades,risk_management,trade_details
+    global api,risk_management,trade_details
     # Ensure integer values are passed to get_candles (period and offset must be ints)
     period = int(risk_management.timeframe) // (int(risk_management.timeframe)//10)
     if period <= 0:
@@ -288,47 +193,43 @@ async def get_open_trades():
         # print(f"Fetched open trades: {openTrades}\n\n\n")
         # # handle dict or list responses from the API
         trades_list = []
-        for tid, data in openTrades.items():  # type: ignore
-            trade_detail = await trade_details.get_trade(trade_id=data.get("id"))
-            direction = trade_detail.get("direction")
-            current_price = await api.get_candles(data.get("asset"), period, offset)
-            if direction is None:
-                # Try to infer or set a placeholder so UI doesn't look broken
-                direction = "PROCESSING..."
-            logger.info(openTrades[data.get("id")])
+        for tid,data in openTrades.items(): #type: ignore
             trades_list.append({
                 "trade_id": data.get("id"),
                 "asset": data.get("asset"),
                 "amount": data.get("amount"),
-                "direction":direction,
+                "direction": trade_details[tid].direction,
                 "profit": data.get("profit"),
                 "openedTime": data.get("openTime"),
                 "open_price": data.get("openPrice"),
                 # current_price may be non-serializable depending on API; include as-is and let caller handle
-                "current_price": current_price 
+                "current_price": await api.get_candles(data.get("asset"), period, offset) #type: ignore
             })
-        logger.info(f"period: {period}, offset: {offset}")
+        # print(f"Compiled open trades list: {trades_list}")
         return JSONResponse(status_code=status.HTTP_200_OK, content={"open_trades": trades_list})
     except (Exception, KeyboardInterrupt) as e:
         logger.error(f"Error fetching open trades: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error fetching open trades: {e}")
-    
+
 @app.get("/current_signals", response_class=JSONResponse)
 async def get_current_signals():
     global Signals
-    signals_get = await Signals.get_signal(returnAll=True)
+    signals_get = Signals.copy()
+    logger.info(f"current Signals {signals_get}")
     signal_list = []
-    for Tsid,data in signals_get.items(): #type: ignore
-        logger.info(data)
+    for signal_id, signal_details in signals_get.items(): #type: ignore
         signal_list.append({
-            "signal_provider":data["signal_provider"],
-            "entry_time":str(data["entry_time"].strftime("%Y-%m-%d %H:%M:%S")),
-            "direction":data["direction"],
-            "asset":data["asset"]
+            "signal_provider": signal_details.signal_provider,
+            "entry_time": str(signal_details.entry_time),
+            "direction": signal_details.direction,
+            "asset": signal_details.asset
         })
         
-    return JSONResponse(status_code=status.HTTP_200_OK, content={"signals":signal_list})
-    
+    return JSONResponse(status_code=status.HTTP_200_OK, content={"signals": signal_list})
+
+
+    #
+    # return JSONResponse(status_code= status.HTTP_200_OK,content={f"message:{Signals.get_signal(returnAll=True)}"})
 @app.post("/set_risk_management", response_class=JSONResponse  )
 async def set_risk_management(Risk: RISK_MANAGEMENT):
     global risk_management
@@ -341,40 +242,27 @@ async def set_risk_management(Risk: RISK_MANAGEMENT):
         return JSONResponse(status_code= status.HTTP_200_OK,content={f"message": "Risk managment values successfully set to: {risk_management}"})
     else:
         return JSONResponse(status_code= status.HTTP_400_BAD_REQUEST,content={f"message": "Risk managment values not set.Please ensure schema : {initial_amount,martingale_levels,martingale_multiplier,buffer_time,timeframe}"})
-    
 @app.post("/get_risk_management", response_class=JSONResponse)
 async def get_risk_management():
     global risk_management
     return JSONResponse(status_code= status.HTTP_200_OK,content={f"message": f"Risk managment values: {risk_management}"})
-    
+
 @app.post("/trade_signal")
 async def trade_signal_webhook(request: Request)->JSONResponse:
-    global api,risk_management,account_details,Signals
+    global api,risk_management,account_details
     account_details.balance = await api.balance()
     raw_data = (await request.body()).decode('utf-8')
     logger.info(f"\n\nReceived raw data from notification: {raw_data}\n\n")
-    if account_details.balance <= -12:
-        logger.critical(f"Account drawback threshold reached: Current balance is ${account_details.balance}. Aborting trade attempt.")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Account drawback threshold reached: Current balance is ${account_details.balance}. Aborting trade attempt.")    
-    # try:
-    #     old_signals = await Signals.get_signal(returnAll=True)
-    #     logger.info(f"Cleaning up old signals. Current signals: {old_signals}")
-    #     if old_signals is not None:
-    #         for signal in dict(old_signals):
-    #             if signal.get("entry_time") < datetime.now(pytz.timezone(risk_management.local_timezone)) - timedelta(seconds= risk_management.timeframe * risk_management.martingale_levels):
-    #                 await Signals.remove_signal(signal_provider=signal["signal_provider"], entry_time=signal.get("entry_time"), asset=signal["asset"])
-    #                 logger.info(f"Removed old signal: {signal}")
-    # except (Exception,KeyboardInterrupt) as e:
-    #     logger.error(f"Error cleaning up old signals: {e}", exc_info=True)
     try:
-        signal_data = await parse_signal(text=raw_data)
-        asyncio.create_task(take_trade(trade_data=signal_data))
+        trade_data = parse_signal(text=raw_data)
+        asyncio.create_task(take_trade(trade_data))
     except (Exception,KeyboardInterrupt) as e:
         logger.error(f"Error taking trade: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail=f"Error taking trade: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error taking trade: {e}")
     return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Trade signal received and processed successfully."})
     
-async def parse_signal(text:str = "")->dict:
+# Helper functions
+def parse_signal(text:str = "")->SIGNAL:
     global risk_management,Signals
     #parse signal data
     parsed_data = parse_macrodroid_trade_data(text)
@@ -415,154 +303,185 @@ async def parse_signal(text:str = "")->dict:
         raise e
     logger.info(f"Signal entry time {signal_dt_in_signal_tz.tzinfo}: {entryTime}. Calculated local target entry time: {target_local_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     
+    data = {
+        "signal_id":f"{signal_provider}|{entryTime}|{asset_name_for_po}",
+        "signal_details":{"signal_provider": signal_provider,
+        "asset":asset_name_for_po,
+        "direction":direction,
+        "entry_time": target_local_dt
+            }
+        }
     
-    
-    if current_local_dt > target_local_dt + timedelta(seconds=1): # Allow a small buffer for late signals, e.g., up to 5 seconds past target entry time.
-        logger.warning(f"Signal for {asset_name_for_po} {direction} (Entry: {entryTime}) arrived late. "
-                       f"Current local time: {current_local_dt.strftime('%d-%m-%Y %H:%M:%S')}, Target local time: {target_local_dt.strftime('%d-%m-%Y %H:%M:%S')}. "
-                       f"Skipping trade.")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail= {"message": "Signal arrived too late, trade skipped."})
+    signal_data = SIGNAL(**data)
     
     logger.info(f"New signal received:{asset_name_for_po} {direction}. Initiating a new trade sequence. Initial Amount: ${risk_management.initial_amount}")
     try:
-        if await Signals.get_signal(signal_provider=signal_provider, entry_time=target_local_dt, asset=asset_name_for_po) == {"error": "Signal not found"}:
-            new_signal = await Signals.add_new_signal(signal_provider=signal_provider, entry_time=target_local_dt, direction=direction.upper(), asset=asset_name_for_po)
+        if signal_data.signal_id not in Signals:
+            Signals[signal_data.signal_id] = signal_data.signal_details
         else:
             logger.warning(f"Signal for {asset_name_for_po} {direction} at {entryTime} from {signal_provider} already exists. Skipping duplicate signal.")
-            return {"status": "skipped"}
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"===Error placing trade for signal:{signal_provider} => {asset_name_for_po} {direction}{entryTime} ")
     except (Exception,KeyboardInterrupt) as e:
         logger.error(f"Error placing trade for {asset_name_for_po} {direction}: {e}", exc_info=True)
+        del signal_data
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error placing trade: {e}")
-    # entry block
-    time_to_wait_seconds = (target_local_dt - datetime.now(LOCAL_TIMEZONE)- timedelta(milliseconds=0)).total_seconds()
-    if time_to_wait_seconds > 0:
-        logger.info(f"Waiting {time_to_wait_seconds:.2f} seconds until target entry time: {target_local_dt.strftime('%H:%M:%S')}")
-        return {"status":"wait","signal":new_signal}
-    else:
-        logger.info(f"Signal arrived exactly at or slightly past target entry time ({current_local_dt.strftime('%H:%M:%S')} vs {target_local_dt.strftime('%H:%M:%S')}). Placing trade immediately.")
-        return {"status":"enter","signal":new_signal}
     
-async def take_trade(trade_data:dict)->JSONResponse:
+    if current_local_dt > target_local_dt + timedelta(seconds=1): # Allow a small buffer for late signals, e.g., up to 5 seconds past target entry time.
+            logger.warning(f"Signal for {asset_name_for_po} {direction} (Entry: {entryTime}) arrived late. "
+                       f"Current local time: {current_local_dt.strftime('%d-%m-%Y %H:%M:%S')}, Target local time: {target_local_dt.strftime('%d-%m-%Y %H:%M:%S')}. "
+                       f"Skipping trade.")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail= {"message": "Signal arrived too late, trade skipped."})
+    return signal_data
+    
+async def take_trade(signal:SIGNAL):
     global risk_management,api,trade_details,Signals
         # Place the initial trade
+    current_local_dt = datetime.now(pytz.timezone(str(risk_management.local_timezone)))
     try:
-        #check entry status of trade_data
-        signal_data = trade_data["signal"]
-        if(trade_data["status"]== "skipped"):
-            return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Trade skipped."})
-        elif(trade_data["status"] == "wait"):
-            wait_time = (signal_data["signal"]["entry_time"] - datetime.now(pytz.timezone(risk_management.local_timezone))).total_seconds()
-            await asyncio.sleep(wait_time)
-        
-        
+        #check entry status of trade_data        
+        signal_data = signal.signal_details
+        time_to_wait_seconds = (signal_data.entry_time - current_local_dt- timedelta(milliseconds=0)).total_seconds()
+        if time_to_wait_seconds > 0:
+            logger.info(f"Waiting {time_to_wait_seconds:.2f} seconds until target entry time: {signal_data.entry_time.strftime('%H:%M:%S')}")
+            await asyncio.sleep(time_to_wait_seconds)
+        else:
+            logger.info(f"Signal arrived exactly at or slightly past target entry time ({current_local_dt.strftime('%H:%M:%S')} vs {signal_data.entry_time.strftime('%H:%M:%S')}). Placing trade immediately.")        
         try:
-            signal_direction = signal_data["signal"]["direction"]
+            signal_direction = signal_data.direction
             if signal_direction.upper() == "BUY" or signal_direction.upper() == "CALL": #type: ignore
                 (buy_id, Details) = await api.buy(
-                    asset=signal_data["signal"]["asset"]+"_otc", 
+                    asset=signal_data.asset+"_otc", 
                     amount= risk_management.initial_amount, 
                     time= risk_management.timeframe,
                     check_win=False )
             elif signal_direction.upper() == "SELL" or signal_direction.upper() == "PUT":
                 (buy_id, Details) = await api.sell(
-                    asset=signal_data["signal"]["asset"]+"_otc", 
+                    asset=signal_data.asset+"_otc",  
                     amount= risk_management.initial_amount, 
                     time= risk_management.timeframe, 
                     check_win=False )
         except (Exception,KeyboardInterrupt) as e:
-            logger.error(f"Error placing trade for {trade_data["asset"]} {trade_data["direction"]}: {e}", exc_info=True)
-            if 'buy_id' in locals():
-                await trade_details.remove_trade(trade_id=buy_id)  # type: ignore
-            if signal_data and "Tsid" in signal_data:
-                await Signals.remove_signal(Tsid=signal_data["Tsid"])  # type: ignore
+            logger.error(f"Error placing trade for {signal_data.asset+"_otc", } {signal_data.direction}: {e}", exc_info=True)
+            del signal_data
+            del signal
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail={"message": f"Error placing trade: {e}"})
         
-        
         logger.info(f"\n\n======Trade placed successfully.=======\n -Trade ID: {buy_id}\n-Details: {Details}\n\n")
-        logger.info(f"signal data:{signal_data}")
-        Details["Tsid"] = signal_data["Tsid"]
-        Details["direction"] = signal_data["signal"]["direction"]
-        Details["level"]= 0
-        Details["asset"] = signal_data["signal"]["asset"]
-        await trade_details.add_trade(trade_id=buy_id, trade_data=Details)
-        try:
-            asyncio.create_task(manage_martingale(trade_id=buy_id))
-        except (Exception,KeyboardInterrupt) as e:
-            logger.error(f"Error managing martingale for trade {buy_id}: {e}", exc_info=True)
-            await Signals.remove_signal(Tsid=signal_data["Tsid"])
-            await trade_details.remove_trade(trade_id=buy_id)
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail={"message": f"Error managing martingale: {e}"})
+        data = {
+        "trade_id":buy_id,
+        "trade_details":{"signal_provider": signal_data.signal_provider,
+        "asset":Details["asset"],
+        "direction":signal_data.direction,
+        "entry_time": datetime.strptime(Details["openTime"], "%Y-%m-%d %H:%M:%S"),
+        "level":0,
+        "open_price":Details["openPrice"],
+        "amount":float(Details["amount"])
+            }
+        }
+        trade = TRADE(**data)
+        logger.info(f"trade details: {trade.trade_details}")
+        trade_details[trade.trade_id] = trade.trade_details
+        # try:
+        trade_results = await manage_martingale(trade=trade)
+        if trade_results:
+            logger.info(f"Signal for {trade.trade_details.signal_provider} at {signal_data.entry_time} was a success")
+            Signals.pop(signal.signal_id)
+            del signal_data
+            del signal
+        else:
+            logger.info(f"Signal for {trade.trade_details.signal_provider} at {signal_data.entry_time}  Failed")
+            Signals.pop(signal.signal_id)
+            del signal_data
+            del signal
+            
     except(Exception,KeyboardInterrupt) as e:
-        raise e
-    jsonResponse = JSONResponse(status_code= status.HTTP_200_OK,content={"message": f"Trade placed successfully. Trade ID: {buy_id}", "trade_details": Details})
-    return jsonResponse
+            logger.error(f"Error placing trade for {signal_data.asset+"_otc", } {signal_data.direction}: {e}", exc_info=True)
+            Signals.pop(signal.signal_id)
+            del trade
+            del signal_data
+            del signal
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail={"message": f"Error placing trade: {e}"})
+
     
-async def manage_martingale(trade_id:str)->None:
-    global api,risk_management,account_details,trade_details,Signals
-    logger.info(f"waiting for trade to end: {trade_id}")
-    
-    current_trade = await trade_details.get_trade(trade_id=trade_id)
-    for field in ["Tsid","direction","amount","level","entryTime","asset","full_details"]:
-        if current_trade.get(field) is None:
-            logger.error(f"Missing field {field} in current_trade: {current_trade.keys()}")
-            raise Exception(f"Missing trade detail field: {field}")
-        
+async def manage_martingale(trade:TRADE)-> bool:
+    global api,risk_management,account_details,trade_details
+    current_trade = trade.trade_details
+    logger.info(f"waiting for trade to end: {trade.trade_id}")
     logger.info(f"current trade details: {current_trade}")
     try:
-        status = await api.check_win(trade_id)
+        status = await api.check_win(trade.trade_id)
         result = status["result"]
     except (Exception,KeyboardInterrupt) as e:
-        logger.error(f"Error checking trade result for {trade_id}: {e}", exc_info=True)
-        await Signals.remove_signal(Tsid=current_trade["Tsid"])  # type: ignore
-        await trade_details.remove_trade(trade_id=trade_id)
-        raise e
+        logger.error(f"Error checking trade result for {trade.trade_id}: {e}", exc_info=True)
+        trade_details.pop(trade.trade_id)
+        del current_trade
+        del trade
+        return False
     logger.info(status)
     if result.upper() == "LOSS":
         account_details.P_n_L_day = account_details.P_n_L_day-status["amount"]
         account_details.lifespan = account_details.lifespan -status["amount"]
-        current_trade["level"] = current_trade["level"] + 1
-        if current_trade["level"] > risk_management.martingale_levels:
-            logger.warning(f"Max martingale levels reached for trade {trade_id}. Ending martingale sequence.")
-            await Signals.remove_signal(Tsid=current_trade["Tsid"])  # type: ignore
-            await trade_details.remove_trade(trade_id=trade_id)
-            return
-        logger.info(f"Trade {trade_id} lost. Initiating martingale sequence. level: {int(current_trade["level"])}")#type: ignore
-        new_amount = current_trade["amount"] * risk_management.martingale_multiplier
-        current_trade["amount"] = new_amount
-        logger.info(f"Placing martingale trade level {current_trade["level"]} for amount: ${new_amount}")
+        current_trade.level = current_trade.level + 1
+        if current_trade.level > risk_management.martingale_levels:
+            logger.warning(f"Max martingale levels reached for trade {trade.trade_id}. Ending martingale sequence.")
+            trade_details.pop(trade.trade_id)
+            trade_details.pop(trade.trade_id)
+            del current_trade
+            del trade
+            return False
+        logger.info(f"Trade {trade.trade_id} lost. Initiating martingale sequence. level: {int(current_trade.level)}")#type: ignore
+        new_amount = current_trade.amount * risk_management.martingale_multiplier
+        current_trade.amount = new_amount
+        logger.info(f"Placing martingale trade level {current_trade.level} for amount: ${new_amount}")
         try:
-            if current_trade["direction"].upper() == "BUY" or current_trade["direction"].upper() == "CALL": #type: ignore
+            if current_trade.direction.upper() == "BUY" or current_trade.direction.upper() == "CALL": #type: ignore
                 (buy_id, Details) = await api.buy(
-                    asset=current_trade["asset"]+"_otc", 
+                    asset=current_trade.asset, 
                     amount= new_amount, 
                     time= risk_management.timeframe, 
                     check_win=False )
-            elif current_trade["direction"].upper() == "SELL" or current_trade["direction"].upper() == "PUT":
+            elif current_trade.direction.upper() == "SELL" or current_trade.direction.upper() == "PUT":
                 (buy_id, Details) = await api.sell(
-                    asset=current_trade['asset']+"_otc", 
+                    asset=current_trade.asset, 
                     amount= new_amount, 
                     time= risk_management.timeframe, 
                     check_win=False )
-            logger.info(f"\n\n======Martingale Trade placed successfully.=======\n -Trade ID: {buy_id}\n-Details: {Details}\n\n")
-            Details["Tsid"] = current_trade["Tsid"]
-            Details["direction"] = current_trade["direction"]
-            Details["level"]= current_trade["level"]
-            Details["asset"] = current_trade["asset"]
-            await trade_details.update_trade(old_trade_id=trade_id,trade_id=buy_id,trade_data=Details)
-            status_results = await manage_martingale(trade_id=buy_id)
-            return status_results
         except (Exception,KeyboardInterrupt) as e:
-            logger.error(f"Error placing martingale trade for {current_trade['asset']} {current_trade["direction"]}: {e}", exc_info=True)
-            await Signals.remove_signal(Tsid=current_trade["Tsid"])  # type: ignore
-            await trade_details.remove_trade(trade_id=trade_id)
-            raise e
+            logger.error(f"Error placing martingale trade for {current_trade.asset} {current_trade.direction}: {e}", exc_info=True)
+            trade_details.pop(trade.trade_id)
+            account_details.P_n_L_day = float(account_details.P_n_L_day) - current_trade.amount
+            account_details.lifespan = float(account_details.lifespan) - current_trade.amount
+            del current_trade
+            del trade
+            return False
+        logger.info(f"\n\n======Martingale Trade placed successfully.=======\n -Trade ID: {buy_id}\n-Details: {Details}\n\n")
+        data = {
+        "trade_id":buy_id,
+        "trade_details":{"signal_provider": current_trade.signal_provider,
+        "asset":Details["asset"],
+        "direction":current_trade.direction,
+        "entry_time": datetime.strptime(Details["openTime"], "%Y-%m-%d %H:%M:%S"),
+        "level":current_trade.level,
+        "open_price":Details["openPrice"],
+        "entry_id":buy_id,
+        "amount":float(Details["amount"])
+            }
+        }
+        trade_details.pop(trade.trade_id)
+        trade = TRADE(**data)
+        trade_details[trade.trade_id] = trade.trade_details
+        status_results = await manage_martingale(trade=trade)
+        return status_results
     else:
-        logger.info(f"Trade {trade_id} won or tied. Martingale sequence completed.")
-        print(f"==trade result==\n -Asset:{current_trade['asset']}\n -lastest amount: {current_trade["amount"]}\n -martingale level: {current_trade["level"]}\n -profit/loss: {status["profit"]}\n")
+        logger.info(f"Trade {trade.trade_id} won or tied. Martingale sequence completed.")
+        print(f"==trade result==\n -Asset:{current_trade.asset}\n -lastest amount: {current_trade.amount}\n -martingale level: {current_trade.level}\n -profit/loss: {status["profit"]}\n")
+        trade_details.pop(trade.trade_id)
+        del current_trade
+        del trade
         account_details.P_n_L_day = account_details.P_n_L_day + status["profit"]
         account_details.lifespan = account_details.lifespan + status["profit"]
-        await Signals.remove_signal(Tsid=current_trade["Tsid"])  # type: ignore
-        await trade_details.remove_trade(trade_id=trade_id)
+        return True
+    
     
 async def reset_P_n_L_day():
     global account_details

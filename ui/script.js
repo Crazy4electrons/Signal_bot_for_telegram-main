@@ -64,15 +64,15 @@ async function updateOpenTrades() {
                 openPrice = openPrice;
                 if (t.direction === "BUY") {
                     const diff = lastClose - openPrice;
-                    const formatted =Math.abs(Math.round(diff*10000)); // optional formatting
+                    const formatted =Math.abs(Math.round(diff*1000)); // optional formatting
                     pointsHtml = diff >= 0 ? `<span style="color:green;">${formatted}</span>` : `<span style="color:red;">${formatted}</span>`;
                 } else if (t.direction === "SELL") {
                     const diff = openPrice-lastClose ;
-                    const formatted = Math.abs(Math.round(diff/10000)); // optional formatting
+                    const formatted = Math.abs(Math.round(diff/1000)); // optional formatting
                     pointsHtml = diff >= 0 ? `<span style="color:green;">${formatted}</span>` : `<span style="color:red;">${formatted}</span>`;
                 } else {
                     const diff = lastClose - openPrice;
-                    const formatted  =Math.abs(Math.round(diff/10000)); // optional formatting
+                    const formatted  =Math.abs(Math.round(diff/1000)); // optional formatting
                     pointsHtml = String(formatted);
                 }
             }
