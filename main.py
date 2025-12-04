@@ -15,6 +15,9 @@ from pydantic import BaseModel, Field
 
 from rich.logging import RichHandler
 import logging
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from typing import Callable, Tuple
 
 load_dotenv()
 
@@ -25,7 +28,7 @@ class RISK_MANAGEMENT(BaseModel):
     initial_amount: float = 1
     martingale_levels: int = 3
     martingale_multiplier: int = 2
-    buffer_time: float = 0.5
+    drawback_threshold: int = -16
     timeframe:  int = 300
     local_timezone: str = 'Etc/GMT-2'
 
@@ -36,6 +39,44 @@ class ACCOUNT_DETAILS(BaseModel):
     async def update_balance(self,api):
         self.balance = await api.balance()
         
+
+class QueueMiddleware(BaseHTTPMiddleware):
+    """Queue incoming HTTP requests and process them sequentially.
+
+    - max_queue: 0 means unlimited queue size. Set >0 to limit queue length.
+    """
+    def __init__(self, app, max_queue: int = 0):
+        super().__init__(app)
+        self._queue: asyncio.Queue[Tuple[Callable, Request, asyncio.Future]] = asyncio.Queue(maxsize=max_queue)
+        self._worker_task: asyncio.Task | None = None
+
+    async def dispatch(self, request: Request, call_next: Callable):
+        # start worker lazily on first request (safe for startup ordering)
+        if self._worker_task is None or self._worker_task.done():
+            self._worker_task = asyncio.create_task(self._worker())
+
+        loop = asyncio.get_event_loop()
+        response_future: asyncio.Future = loop.create_future()
+        # enqueue the work item: (call_next coroutine factory, request, future to set result)
+        await self._queue.put((call_next, request, response_future))
+        # wait until worker sets the result (Response) or raises
+        response = await response_future
+        return response
+
+    async def _worker(self):
+        while True:
+            call_next, request, response_future = await self._queue.get()
+            try:
+                # call_next(request) returns a coroutine that yields a Response when awaited
+                response = await call_next(request)
+                if not response_future.cancelled():
+                    response_future.set_result(response)
+            except Exception as e:
+                if not response_future.cancelled():
+                    response_future.set_exception(e)
+            finally:
+                self._queue.task_done()
+
 class TRADE_FIELDS( BaseModel):
     signal_provider: str
     asset:str
@@ -61,6 +102,7 @@ account_details:ACCOUNT_DETAILS = ACCOUNT_DETAILS()
 risk_management:RISK_MANAGEMENT = RISK_MANAGEMENT()
 Signals:dict = {}
 trade_details:dict = {}
+# closed_trades:dict = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -75,19 +117,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # risk_management:object|None = None
     #App startup values
     set_risk_management = input("Do you want to set risk managment values? (y/n): ").strip().lower()
-    if set_risk_management == "y":
+    if set_risk_management == "y" or set_risk_management == "yes":
         for _ in range(3):
             intial_amount = input("Enter initial amount: ").strip()
             martingale_levels = input("Enter martingale levels: ").strip()
             martingale_multiplier = input("Enter martingale multiplier: ").strip()
             timeframe = input("Enter timeframe: ").strip()
-            buffer_time = input("Enter buffer time: ").strip()
-            if intial_amount and martingale_levels and martingale_multiplier and timeframe and buffer_time:
+            drawback_threshold = input("Enter drawback threshold: ").strip()
+            if intial_amount and martingale_levels and martingale_multiplier and timeframe and drawback_threshold:
                 risk_management = RISK_MANAGEMENT(
                     initial_amount = float(intial_amount),
                     martingale_levels=int(martingale_levels),
                     martingale_multiplier=int(martingale_multiplier),
-                    buffer_time=float(buffer_time),
+                    drawback_threshold=int(drawback_threshold),
                     timeframe= int(timeframe)
                     )
                 break
@@ -107,7 +149,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             if balance:
                 logger.info("FastAPI lifespan startup event: Connected to Pocket Option client.")
                 logger.info(f"Startup Balance: {balance}")
-                logger.info(f"\n\n\n== Risk management values == \n - Initial entry amount: ${risk_management.initial_amount}\n - max martingale level: {risk_management.martingale_levels}\n - Martingale multiplier: {risk_management.martingale_multiplier}\n - Buffer time: {risk_management.buffer_time}\n - Timeframe: {risk_management.timeframe}\n\n-----use POST : /set_risk_management to change settings \n\n") #type: ignore
+                logger.info(f"\n\n\n== Risk management values == \n - Initial entry amount: ${risk_management.initial_amount}\n - max martingale level: {risk_management.martingale_levels}\n - Martingale multiplier: {risk_management.martingale_multiplier}\n - drawback threshol: {risk_management.drawback_threshold}\n - Timeframe: {risk_management.timeframe}\n\n-----use POST : /set_risk_management to change settings \n\n") #type: ignore
                 account_details = ACCOUNT_DETAILS(balance=balance,P_n_L_day= 0,lifespan=0)
                 break
             else:
@@ -128,16 +170,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     return
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # allow all origins including 'null'
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.add_middleware(QueueMiddleware, max_queue=0)
 
 # Enable CORS so browser pages served from file:// (origin 'null') or other origins can reach the API.
 # For local development it's fine to allow all origins; tighten this in production.
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=["*"],  # allow all origins including 'null'
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
+
 app.mount("/ui", StaticFiles(directory="ui", html=True), name="ui")
 @app.get("/", response_class=HTMLResponse)
 async def root_index():
@@ -166,14 +210,20 @@ async def ui_styles():
 @app.get("/account_details", response_class=JSONResponse)
 async def get_account_details():
     global api,account_details
-    balance = await api.balance()
-    if balance <= 0:
-        for retries in range(10):
-            await api.reconnect()
-            balance =await api.balance()
-            if balance > 0:
-                break
-    account_details.balance = balance
+    balance = None
+    try:
+        balance = await api.balance()
+        if balance <= 0:
+            for retries in range(10):
+                await api.reconnect()
+                balance =await api.balance()
+                if balance > 0:
+                    break
+                if retries == 9:
+                    logger.error("Failed to reconnect and get a valid balance after 10 attempts.")
+        account_details.balance = balance
+    except Exception as e:
+        balance = "fetch failed"
     P_n_L_day = account_details.P_n_L_day
     lifespan  = account_details.lifespan
     jsonResponse = JSONResponse(status_code= status.HTTP_200_OK,content={"balance": balance,"P_n_L_day": P_n_L_day, "lifespan": lifespan})
@@ -187,29 +237,41 @@ async def get_open_trades():
     if period <= 0:
         period = 1
     offset = period * 5
+    
         
     try:
-        openTrades = await api.opened_deals()
+        async with asyncio.timeout(10):
+            openTrades = await api.opened_deals()
         # print(f"Fetched open trades: {openTrades}\n\n\n")
         # # handle dict or list responses from the API
         trades_list = []
         for tid,data in openTrades.items(): #type: ignore
+            async with asyncio.timeout(10):  # Set a 3-second timeout
+                current_price = await api.get_candles(data.get("asset"), period, offset)
             trades_list.append({
                 "trade_id": data.get("id"),
                 "asset": data.get("asset"),
                 "amount": data.get("amount"),
-                "direction": trade_details[tid].direction,
+                "direction": trade_details[data.get("id")].direction if data.get("id") in trade_details else "-",
                 "profit": data.get("profit"),
                 "openedTime": data.get("openTime"),
                 "open_price": data.get("openPrice"),
                 # current_price may be non-serializable depending on API; include as-is and let caller handle
-                "current_price": await api.get_candles(data.get("asset"), period, offset) #type: ignore
+                "current_price": current_price #type: ignore
             })
         # print(f"Compiled open trades list: {trades_list}")
         return JSONResponse(status_code=status.HTTP_200_OK, content={"open_trades": trades_list})
     except (Exception, KeyboardInterrupt) as e:
         logger.error(f"Error fetching open trades: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error fetching open trades: {e}")
+
+# @app.get("/closed_trades")
+# async def get_closed_trades():
+#     global closed_trades
+#     close_list = {}
+#     for Tsid in closed_trades:
+#         close_list[Tsid] = closed_trades[Tsid]
+#     return JSONResponse(status_code=status.HTTP_200_OK, content={"closed_trades": close_list})
 
 @app.get("/current_signals", response_class=JSONResponse)
 async def get_current_signals():
@@ -233,15 +295,15 @@ async def get_current_signals():
 @app.post("/set_risk_management", response_class=JSONResponse  )
 async def set_risk_management(Risk: RISK_MANAGEMENT):
     global risk_management
-    if Risk.initial_amount and Risk.martingale_levels and Risk.martingale_multiplier and Risk.buffer_time and Risk.timeframe:
+    if Risk.initial_amount and Risk.martingale_levels and Risk.martingale_multiplier and Risk.drawback_threshold and Risk.timeframe:
         risk_management.initial_amount = Risk.initial_amount
         risk_management.martingale_levels = Risk.martingale_levels
         risk_management.martingale_multiplier = Risk.martingale_multiplier
-        risk_management.buffer_time = Risk.buffer_time
+        risk_management.drawback_threshold = Risk.drawback_threshold
         risk_management.timeframe = Risk.timeframe
         return JSONResponse(status_code= status.HTTP_200_OK,content={f"message": "Risk managment values successfully set to: {risk_management}"})
     else:
-        return JSONResponse(status_code= status.HTTP_400_BAD_REQUEST,content={f"message": "Risk managment values not set.Please ensure schema : {initial_amount,martingale_levels,martingale_multiplier,buffer_time,timeframe}"})
+        return JSONResponse(status_code= status.HTTP_400_BAD_REQUEST,content={f"message": "Risk managment values not set.Please ensure schema : {initial_amount,martingale_levels,martingale_multiplier,drawback_threshold,timeframe}"})
 @app.post("/get_risk_management", response_class=JSONResponse)
 async def get_risk_management():
     global risk_management
@@ -253,23 +315,29 @@ async def trade_signal_webhook(request: Request)->JSONResponse:
     account_details.balance = await api.balance()
     raw_data = (await request.body()).decode('utf-8')
     logger.info(f"\n\nReceived raw data from notification: {raw_data}\n\n")
+    if account_details.P_n_L_day <= risk_management.drawback_threshold:
+        logger.warning("P_n_L_day is below the threshold. Trade signal processing halted.")
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Trade signal processing halted due to P_n_L_day threshold."})
     try:
         trade_data = parse_signal(text=raw_data)
-        asyncio.create_task(take_trade(trade_data))
+        if not trade_data:
+            #type: ignore
+            return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Invalid trade signal data."})
+        asyncio.create_task(take_trade(trade_data))#type: ignore
     except (Exception,KeyboardInterrupt) as e:
         logger.error(f"Error taking trade: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error taking trade: {e}")
     return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Trade signal received and processed successfully."})
     
 # Helper functions
-def parse_signal(text:str = "")->SIGNAL:
+def parse_signal(text:str = "")->SIGNAL|bool:
     global risk_management,Signals
     #parse signal data
     parsed_data = parse_macrodroid_trade_data(text)
     logger.info(f"Parsed trade data: {parsed_data}")  
     if not parsed_data.get("asset") or not parsed_data.get("direction") or not parsed_data.get("time") or not parsed_data.get("signal_provider") or not parsed_data.get("timezone"):
         logger.error("Failed to parse essential trade data (asset, direction, entry time, signal provider, or timezone) from notification. Aborting trade attempt.")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to parse essential trade data (asset, direction, entry time, signal provider, or timezone) from notification.")
+        return False
     #assign parsed data to variables
     asset_name_for_po = parsed_data["asset"]
     direction = parsed_data["direction"]
@@ -279,7 +347,7 @@ def parse_signal(text:str = "")->SIGNAL:
     logger.info(f"\n\n -------Parsed trade data:----------\n--Asset: {asset_name_for_po}\n--Direction: {direction}\n--Entry Time: {entryTime}\n--Signal Provider: {signal_provider}\n--Timezone: {timezone}\n-----------------------------------\n\n ")
     # Validate direction
     if not direction.upper() in {"CALL", "PUT", "BUY", "SELL"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid direction value. Expected 'CALL', 'PUT', 'BUY', or 'SELL'.")
+        return False
     # Convert entry time to local timezone
     LOCAL_TIMEZONE = pytz.timezone(str(risk_management.local_timezone))
     current_local_dt = datetime.now(LOCAL_TIMEZONE)
@@ -300,7 +368,7 @@ def parse_signal(text:str = "")->SIGNAL:
         target_local_dt = signal_dt_in_signal_tz.astimezone(LOCAL_TIMEZONE)
     except (Exception, KeyboardInterrupt) as e:
         logger.error(f"Error parsing or converting signal entry time '{entryTime}': {e}", exc_info=True)
-        raise e
+        return False
     logger.info(f"Signal entry time {signal_dt_in_signal_tz.tzinfo}: {entryTime}. Calculated local target entry time: {target_local_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     
     data = {
@@ -320,17 +388,18 @@ def parse_signal(text:str = "")->SIGNAL:
             Signals[signal_data.signal_id] = signal_data.signal_details
         else:
             logger.warning(f"Signal for {asset_name_for_po} {direction} at {entryTime} from {signal_provider} already exists. Skipping duplicate signal.")
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"===Error placing trade for signal:{signal_provider} => {asset_name_for_po} {direction}{entryTime} ")
+            return False
     except (Exception,KeyboardInterrupt) as e:
         logger.error(f"Error placing trade for {asset_name_for_po} {direction}: {e}", exc_info=True)
         del signal_data
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error placing trade: {e}")
+        return False
     
     if current_local_dt > target_local_dt + timedelta(seconds=1): # Allow a small buffer for late signals, e.g., up to 5 seconds past target entry time.
             logger.warning(f"Signal for {asset_name_for_po} {direction} (Entry: {entryTime}) arrived late. "
                        f"Current local time: {current_local_dt.strftime('%d-%m-%Y %H:%M:%S')}, Target local time: {target_local_dt.strftime('%d-%m-%Y %H:%M:%S')}. "
                        f"Skipping trade.")
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail= {"message": "Signal arrived too late, trade skipped."})
+            Signals.pop(signal_data.signal_id)
+            return False
     return signal_data
     
 async def take_trade(signal:SIGNAL):
@@ -364,7 +433,7 @@ async def take_trade(signal:SIGNAL):
             logger.error(f"Error placing trade for {signal_data.asset+"_otc", } {signal_data.direction}: {e}", exc_info=True)
             del signal_data
             del signal
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail={"message": f"Error placing trade: {e}"})
+            return
         
         logger.info(f"\n\n======Trade placed successfully.=======\n -Trade ID: {buy_id}\n-Details: {Details}\n\n")
         data = {
@@ -400,11 +469,11 @@ async def take_trade(signal:SIGNAL):
             del trade
             del signal_data
             del signal
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail={"message": f"Error placing trade: {e}"})
+            return
 
     
 async def manage_martingale(trade:TRADE)-> bool:
-    global api,risk_management,account_details,trade_details
+    global api,risk_management,account_details,trade_details,closed_trades
     current_trade = trade.trade_details
     logger.info(f"waiting for trade to end: {trade.trade_id}")
     logger.info(f"current trade details: {current_trade}")
@@ -413,18 +482,20 @@ async def manage_martingale(trade:TRADE)-> bool:
         result = status["result"]
     except (Exception,KeyboardInterrupt) as e:
         logger.error(f"Error checking trade result for {trade.trade_id}: {e}", exc_info=True)
+        # closed_trades[trade.trade_id] = {"trade_details":trade.trade_details,"result":"LOSS","from_server":None}
         trade_details.pop(trade.trade_id)
         del current_trade
         del trade
         return False
     logger.info(status)
     if result.upper() == "LOSS":
-        account_details.P_n_L_day = account_details.P_n_L_day-status["amount"]
-        account_details.lifespan = account_details.lifespan -status["amount"]
+        # closed_trades[trade.trade_id] = {"trade_details":trade.trade_details,"result":"LOSS","from_server":status}
+        account_details.P_n_L_day = account_details.P_n_L_day - status["amount"]
+        account_details.lifespan = account_details.lifespan - status["amount"]
         current_trade.level = current_trade.level + 1
         if current_trade.level > risk_management.martingale_levels:
             logger.warning(f"Max martingale levels reached for trade {trade.trade_id}. Ending martingale sequence.")
-            trade_details.pop(trade.trade_id)
+            # closed_trades[trade.trade_id] = {"trade_details":trade.trade_details,"result":"LOSS","from_server":status}
             trade_details.pop(trade.trade_id)
             del current_trade
             del trade
@@ -448,9 +519,10 @@ async def manage_martingale(trade:TRADE)-> bool:
                     check_win=False )
         except (Exception,KeyboardInterrupt) as e:
             logger.error(f"Error placing martingale trade for {current_trade.asset} {current_trade.direction}: {e}", exc_info=True)
-            trade_details.pop(trade.trade_id)
+            # closed_trades[trade.trade_id] = {"trade_details":trade.trade_details,"result":"LOSS","from_server":status}
             account_details.P_n_L_day = float(account_details.P_n_L_day) - current_trade.amount
             account_details.lifespan = float(account_details.lifespan) - current_trade.amount
+            trade_details.pop(trade.trade_id)
             del current_trade
             del trade
             return False
@@ -475,6 +547,7 @@ async def manage_martingale(trade:TRADE)-> bool:
     else:
         logger.info(f"Trade {trade.trade_id} won or tied. Martingale sequence completed.")
         print(f"==trade result==\n -Asset:{current_trade.asset}\n -lastest amount: {current_trade.amount}\n -martingale level: {current_trade.level}\n -profit/loss: {status["profit"]}\n")
+        # closed_trades[trade.trade_id] = {"trade_details":trade.trade_details,"result":"WON","from_server":status}
         trade_details.pop(trade.trade_id)
         del current_trade
         del trade
@@ -482,8 +555,8 @@ async def manage_martingale(trade:TRADE)-> bool:
         account_details.lifespan = account_details.lifespan + status["profit"]
         return True
     
-    
 async def reset_P_n_L_day():
+    
     global account_details
     while True:
         now = datetime.now(pytz.timezone(risk_management.local_timezone))
@@ -491,3 +564,6 @@ async def reset_P_n_L_day():
         wait_seconds = (next_reset - now).total_seconds()
         await asyncio.sleep(wait_seconds)
         account_details.P_n_L_day = 0
+        
+        
+        

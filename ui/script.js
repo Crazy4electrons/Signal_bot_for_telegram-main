@@ -153,6 +153,7 @@ async function updateClosedTrades() {
         }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         let data = await res.json();
+        console.log('Closed trades data:', data);
         const trades = data.closed_trades || data.trades || data || [];
         const list = Array.isArray(trades) ? trades : (typeof trades === 'object' ? Object.values(trades) : []);
         if (!list.length) {
