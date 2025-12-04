@@ -431,6 +431,7 @@ async def take_trade(signal:SIGNAL):
                     check_win=False )
         except (Exception,KeyboardInterrupt) as e:
             logger.error(f"Error placing trade for {signal_data.asset+"_otc", } {signal_data.direction}: {e}", exc_info=True)
+            Signals.pop(signal.signal_id)
             del signal_data
             del signal
             return
