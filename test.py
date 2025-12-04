@@ -74,14 +74,14 @@ def get_next_5min_interval_time(current_time_str=None):
     return next_time.strftime("%H:%M")
 
 
-def send_test_signal(asset_pair:str,direction_text:str,signal_provider:str,port:str):
+def send_test_signal(asset_pair:str,direction_text:str,signal_provider:str,port:str,timezone:str="Etc/GMT-2"):
     """
     Prompts user for signal details, constructs notification, and sends it.
     """
     print("\n--- Send New Test Signal ---")
     
     
-    direction_text = input("Enter Direction (BUY or SELL): ").strip().upper() if not direction_text else direction_text.upper()
+    direction_text = direction_text.upper()
     
     # Suggest next entry time
     suggested_time = get_next_5min_interval_time()
@@ -98,7 +98,7 @@ def send_test_signal(asset_pair:str,direction_text:str,signal_provider:str,port:
         direction_emoji=direction_emoji,
         direction_text=direction_text,
         signal_provider=signal_provider,
-        timezone="Etc/GMT-2"
+        timezone=timezone
     ).strip()
 
     print("\n--- Generated Notification Content ---")
@@ -130,8 +130,9 @@ if __name__ == "__main__":
     direction_text = input("Enter Direction (BUY or SELL): ").strip().upper()
     signal_provider = input("Enter Signal Provider: ").strip()
     port = input("Enter Port (default 3000): ").strip() or "3000"
+    timezone = input("Enter Timezone (default Etc/GMT-2): ").strip() or "Etc/GMT-2"
     print(f"Signals will be sent to: http://localhost:{port}/trade_signal")
-    send_test_signal(asset_pair=asset_pair,direction_text=direction_text,signal_provider=signal_provider,port=port)
+    send_test_signal(asset_pair=asset_pair,direction_text=direction_text,signal_provider=signal_provider,port=port,timezone=timezone)
     while True:
         choice = input("\nSend same signal with different time? (y/n): ").strip().lower()
         if choice != 'y':

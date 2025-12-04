@@ -1,164 +1,81 @@
-# Pocket Option Trading Bot
+**Project Layout**
+- **`main.py`**: FastAPI app and primary logic (endpoints, trade lifecycle, PocketOption client integration).
+- **`scraper.py`**: scripts used to fetch or store credentials (e.g., SSID) required by the PocketOption client.
+- **`parse_data.py`**: parsing helper for MacroDroid notification payloads (parses asset/time/direction/provider/timezone).
+- **`measure_latency.py`**, **`test.py`**: misc utilities and test harnesses.
+- **`ui/`**: simple static UI served at `/ui` (contains `index.html`, `script.js`, `styles.css`).
+- **`Macrodroid/MacroDroid.mdr`**: MacroDroid export file (contains macros, variables, and custom widgets). Import into MacroDroid.
+- **`drivers/`**: download edge browser driver and insert in this file if driver is outdated.
 
-Automated trading bot for Pocket Option that executes trades based on Telegram signals using FastAPI, Selenium, and async trading logic with Martingale support. The bot uses MacroDroid on Android to forward Telegram signals to the trading server through ngrok.
+**Purpose**
+- This project receives trading signals (via MacroDroid -> webhook), parses them, and places trades on Pocket Option using an async API client. The FastAPI server exposes a small set of endpoints for status and webhook intake.
 
-## Features
+**Endpoints & Functions (what exists)**
+- `GET /` : serves UI index (redirects to `/ui/` when `ui/index.html` exists).
+- `GET /ui/script.js` and `GET /ui/styles.css` : serve static UI files.
+- `GET /account_details` : returns the current Pocket Option balance and basic account PnL info.
+- `GET /open_trades` : lists currently opened trades (tries to query the PO client).
+- `GET /current_signals` : returns signals currently held in memory.
+- `POST /set_risk_management` : set martingale/size/timeframe settings (expects the `RISK_MANAGEMENT` schema).
+- `POST /get_risk_management` : returns current risk settings (currently implemented as POST in `main.py`).
+- `POST /trade_signal` : webhook endpoint MacroDroid should post to; parses incoming payload, validates, and schedules trade execution.
 
-- **Automated SSID/UID Scraper:** Uses Selenium to log in and extract Pocket Option session credentials.
-- **FastAPI Trading Server:** Receives trade signals via webhook and executes trades using the `pocketoptionapi-async` library.
-- **Martingale Strategy:** Supports up to 2 Martingale levels for trade recovery.
-- **Timezone Handling:** Converts signal times from New York (GMT-4) to local time (Africa/Windhoek).
-- **Test Signal Sender:** Easily test your webhook endpoint with custom signals.
+**Endpoints & Features That Still Need Implementation / Improvement (TODOs)**
+- **Authentication/Validation for webhooks**: currently `POST /trade_signal` trusts incoming payloads. Add a simple secret token or signature check (recommended).
+- **`/closed_trades` endpoint**: commented out in `main.py`. Re-enable and return historical/closed trade data.
+- **Persisting state**: Signals, trade_details and closed_trades are in-memory. Add persistence (SQLite/JSON/Redis) to survive restarts.
+- **Better error handling & retries around PocketOption API**: some reconnect logic exists but should be hardened and logged more granularly.
+- **Unit tests / CI**: add tests for `parse_data.py`, `parse_signal()` and critical endpoints.
+- **Dockerfile**: create a Dockerfile for easier deployment.
+- **closed_trades endpoint**: implement an endpoint to retrieve closed trades for auditing and debugging and `ui/script.js` to display them  in the ui.
+- **set risk_management**: update ui to implement setting risk management.
+- **improve ui**: enhance the web UI to show more stats, trade history, and allow manual signal posting for testing.
 
-## Project Structure
+**MacroDroid Setup (import & variables)**
+- Import file: open MacroDroid and import the `Macrodroid/MacroDroid.mdr` file from this repo.
+- How to import (MacroDroid):
+  - Open MacroDroid app on the Android device.
+  - Skip the intro if it shows up, then press the Home button in the bottom-left.
+  - Choose **Import** and navigate to the `Macrodroid/MacroDroid.mdr` file (copy it to your device first or access via a shared folder).
+  - Import the file and grant any prompts.
+  - After import, open **Variables** in MacroDroid and update the following global variables:
+	 - `ngrok_url` : the public Ngrok forwarding URL (see below) plus the `trade_signal` path if needed (example: `https://<your-id>.ngrok.io/trade_signal`).
+	- `signal_provider` : (optional) default provider name this device will report as.
+	- `timezone` : must be in pytz format (example: `Etc/GMT-2` for GMT+2). This is used when MacroDroid posts the signal so the server can convert entry times correctly.
+   - more info in `Macrodroid/README.md`.
 
-```
-├── .env                    # Environment variables and credentials
-├── drivers/               # WebDriver executables directory
-├── shared_data/          # Shared data storage
-├── Macrodroid/           # MacroDroid macro files
-│   └── MacroDroid.mdr    # Importable macro for signal forwarding
-├── scraper.py            # Session credential scraper
-├── scraper_debug.py      # Debug version of scraper with verbose logging
-├── run_scraper.ps1       # PowerShell script to run scraper with credentials
-├── trader.py             # Trading logic implementation
-├── main.py              # FastAPI server and Martingale strategy
-├── parse_data.py        # Signal parsing utilities
-├── test.py              # Signal testing utility
-├── requirements.txt     # Python package dependencies
-└── pyproject.toml       # Project configuration
-```
+**MacroDroid Custom Widgets**
+- This MacroDroid export includes custom widgets you can add to your Home screen: `test signal`, `go to web ui`, and `quick view`.
+- `test signal` : sends a test notification / webhook to make sure your server receives and parses a signal correctly.
+- `go to web ui` : opens the web UI served by this app (useful to monitor signals and trades).
+- `quick view` : a compact widget that shows key account values (balance, PnL) by calling the local `/account_details` endpoint.
 
-## Prerequisites
+**Environment & Setup (Windows / PowerShell)**
+1. Install dependencies (choose one),Create & activate a Python virtual environment (example using `venv`):
+	- Create venv (if not present): `uv sync` then Activate in PowerShell or your console: `./.venv/Scripts/Activate.ps1`
+	  - If you are using a different environment manager, activate accordingly.
+        - usualy its `python -m venv .venv` to create
+        - then `.\.venv\Scripts\Activate.ps1` to activate in powershell or `source .venv/bin/activate` in bash
+        -install dependencies with `pip install -r requirements.txt`
+2. Ensure required env values are present (example `.env`):
+	- `ssid` : required by the PocketOption client (used inside `main.py` lifespan to connect). You can create it via `scraper.py` or set it manually.
+3. Run the app with Uvicorn (replace PORT):
+	- `uvicorn main:app --port <PORT>`
 
-1. **Install Python 3.13+**  
-   Make sure you have Python 3.13 or higher installed.
+**Ngrok (webhook) setup**
+- Start ngrok on the same machine and forward the port you run the app on, e.g.: `ngrok http <PORT>`.
+- Copy the public forwarding URL (e.g. `https://<id>.ngrok.io`) and paste into MacroDroid variable `ngrok_url`. If MacroDroid expects a path, append `/trade_signal`.
+- Use the `test signal` MacroDroid widget to send a test webhook and verify the FastAPI logs show the incoming request.
 
-2. **Install ngrok**
-   - Download ngrok from [ngrok.com](https://ngrok.com)
-   - Sign up for an account
-   - Add your authentication token:
-     ```sh
-     ngrok config add-authtoken YOUR_TOKEN
-     ```
+**Test signal**
+ From MacroDroid use `test signal` widget to verify webhook reception.
 
-3. **Set up MacroDroid**
-   - Install MacroDroid on your Android device
-   - Import the provided macro from the `Macrodroid/MacroDroid.mdr` file
-   - Configure the Notification Trigger to filter your signal channel/group
-   - Edit the HTTP Action block with your ngrok webhook URL
-   - Ensure MacroDroid has notification access permissions
-
-## Setup
-
-2. **Install Dependencies**  
-   Use [uv](https://github.com/astral-sh/uv) or pip:
-   ```sh
-   uv pip install -r requirements.txt
-   # or
-   pip install -r requirements.txt
-   ```
-
-3. **Configure Edge WebDriver**  
-   Download [msedgedriver.exe](https://developer.microsoft.com/en-us/microsoft-edge/tools/webdriver/) and place it in the `drivers/` folder.  
-   Update the path in `scraper.py` and `scraper_debug.py` if needed.
-
-4. **Set Up Environment Variables**  
-   - Copy `.env` and fill in your credentials if needed.
-   - Or use `run_scraper.ps1` to set `PO_EMAIL` and `PO_PASSWORD` for scraping.
-
-5. **Scrape SSID/UID**  
-   Run the scraper to obtain valid session credentials:
-   ```sh
-   uv run scraper.py
-   ```
-   Follow the prompts to log in and select account type (DEMO/REAL).  
-   The script will update `.env` with `SSID` and `UID`.
-
-6. **Start Trading Server**  
-   Run the trading API (choose one):
-   ```sh
-   uvicorn trader:app --reload
-   # or
-   uvicorn main:app --reload
-   ```
-   On startup, select DEMO or REAL account.
-
-7. **Send Test Signals**  
-   Use `test.py` to send simulated signals:
-   ```sh
-   python test.py
-   ```
-   Make sure to update the webhook URL in `test.py` to match your server (e.g., via Ngrok).
-
-## Usage
-
-- **Webhook Endpoint:**  
-  POST plain text signals to `/trade_signal` (see `test.py` for format).
-- **Signal Format:**
-  ```
-  🇪🇺 EUR/USD 🇺🇸 OTC
-  🕘 Expiration 5M
-  ⏺ Entry at 19:27
-  🟩 BUY
-  ```
-  other formats might work cause the regex is only serching for the currency pair,entry time and trade direction.
-- **Martingale:**  
-  The bot will automatically re-enter trades up to 2 times if the previous trade is predicted to lose, based on candle analysis.
-
-## Running the Bot
-
-1. **Start the Scraper First**
-   ```sh
-   uv run scraper.py
-   # or
-   python scraper.py
-   ```
-   Note: You'll need to complete the reCAPTCHA manually a few times initially. After that, the browser will be marked as "human" and reCAPTCHA should appear less frequently.
-
-2. **Start ngrok** (in a new terminal)
-   ```sh
-   .\\ngrok http 8000
-   ```
-   Follow the web interface link and copy the generated URL (e.g., `https://XXX.ngrok-free.app`) and update it in your MacroDroid HTTP Action. Note: The URL changes every time you restart ngrok unless you have a paid license.
-
-3. **Start the Trading Server** (in another terminal)
-   ```sh
-   uvicorn main:app --reload
-   ```
-
-4. **Configure MacroDroid**
-   - Open MacroDroid on your phone
-   - Load the imported macro
-   - Update the webhook URL with your ngrok URL
-   - Enable the macro to start forwarding Telegram signals
-
-## Notes
-
-- **Edge WebDriver:**  
-  Only Microsoft Edge is supported for scraping. Make sure the driver version matches your browser.
-- **Session Refresh:**  
-  The scraper will refresh SSID/UID every 12 hours by default.
-- **Account Type:**  
-  Always select the same account type (DEMO/REAL) in both the scraper and trading server.
-- **Multiple Terminals:**
-  You need three separate terminals running simultaneously:
-  1. Scraper (when refreshing session)
-  2. ngrok (for webhook tunnel)
-  3. Trading server (FastAPI)
-- **Security:**
-  - Never share your SSID/UID or other credentials
-  - Use a demo account first to test your setup
-  - Monitor the bot's performance before using real funds
-- **Debugging:**
-  - Use `scraper_debug.py` for verbose logging
-  - Check terminal outputs for any errors
-  - Verify webhook URLs in both ngrok and MacroDroid
-
-## License
-
-MIT License
-
+**Notes & Recommendations**
+- Secure the webhook: add a simple header token or signature to MacroDroid posts and validate in `POST /trade_signal`.
+- Add persistence for `closed_trades` and `Signals` to help debugging and record keeping.
 ---
+File included for MacroDroid import: `Macrodroid/MacroDroid.mdr`
+UI available at `http://localhost:<PORT>/ui/` after starting `uvicorn`.
 
-**Disclaimer:** This project is for educational purposes. Use at your own risk.
+**license: MIT**
+

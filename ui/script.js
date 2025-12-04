@@ -182,7 +182,7 @@ async function updateClosedTrades() {
 }
 async function updateRiskData() {
     try {
-        let res = await fetch('/get_risk_management', { method: 'POST' });
+        let res = await fetch('/get_risk_management');
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         let data = await res.json();
         const msg = data.message ?? JSON.stringify(data);

@@ -304,7 +304,7 @@ async def set_risk_management(Risk: RISK_MANAGEMENT):
         return JSONResponse(status_code= status.HTTP_200_OK,content={f"message": "Risk managment values successfully set to: {risk_management}"})
     else:
         return JSONResponse(status_code= status.HTTP_400_BAD_REQUEST,content={f"message": "Risk managment values not set.Please ensure schema : {initial_amount,martingale_levels,martingale_multiplier,drawback_threshold,timeframe}"})
-@app.post("/get_risk_management", response_class=JSONResponse)
+@app.get("/get_risk_management", response_class=JSONResponse)
 async def get_risk_management():
     global risk_management
     return JSONResponse(status_code= status.HTTP_200_OK,content={f"message": f"Risk managment values: {risk_management}"})

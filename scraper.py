@@ -234,8 +234,10 @@ if __name__ == "__main__":
     password = os.getenv('PO_PASSWORD') 
     print(f"env_path: {os.path.join(os.getcwd(), ".env")}") 
     print(f"email: {email}, password: {'******' if password else None}")
-    refresh_interval_minutes = int(os.getenv('SSID_REFRESH_INTERVAL_MINUTES',24*60*60))
-    refresh_interval_seconds = refresh_interval_minutes /60
+    refresh_interval_minutes_env = input("Enter SSID refresh interval in minutes (default 1440 mins = 24 hours ): ")
+    save_to_env('SSID_REFRESH_INTERVAL_MINUTES', refresh_interval_minutes_env or '1440')
+    refresh_interval_minutes = int(os.getenv('SSID_REFRESH_INTERVAL_MINUTES',1440))
+    refresh_interval_seconds = refresh_interval_minutes * 60
     
     if not email or not password:
         try:
@@ -244,6 +246,10 @@ if __name__ == "__main__":
                 email = input("PO_EMAIL: ")
                 password  = input("PO_PASSWORD: ")
                 if email and password:
+                    save_credentials = input("Save these credentials to .env file? (y/n): ").strip().lower()
+                    if save_credentials == 'y':
+                        save_to_env('PO_EMAIL', email)
+                        save_to_env('PO_PASSWORD', password)
                     break
                 i += 1
                 if i == 3:
