@@ -268,10 +268,7 @@ async def get_open_trades():
 @app.get("/closed_trades")
 async def get_closed_trades():
     global closed_trades
-    close_list = {}
-    for Tsid in closed_trades:
-        close_list[Tsid] = closed_trades[Tsid]
-    return JSONResponse(status_code=status.HTTP_200_OK, content={"closed_trades": close_list})
+    return JSONResponse(status_code=status.HTTP_200_OK, content={"closed_trades": closed_trades})
 
 @app.get("/current_signals", response_class=JSONResponse)
 async def get_current_signals():
@@ -483,6 +480,7 @@ async def manage_martingale(trade:TRADE)-> bool:
         result = status["result"]
     except (Exception,KeyboardInterrupt) as e:
         logger.error(f"Error checking trade result for {trade.trade_id}: {e}", exc_info=True)
+        server_details = await api.closed_deals()
         closed_trades[trade.trade_id] = {
             "trade_details":{
             "direction":current_trade.direction,
@@ -491,9 +489,9 @@ async def manage_martingale(trade:TRADE)-> bool:
             "level":current_trade.level,
             "signal_provider":current_trade.signal_provider,
             "result":"unknown",
-            "entry_time":current_trade.entry_time,
+            "entry_time":current_trade.entry_time.strftime("%Y-%m-%d %H:%M:%S"),
             "open_price":current_trade.open_price},
-            "from_server":api.closed_deals().get(trade.trade_id, {}) #type: ignore
+            "from_server":str(server_details.get(trade.trade_id, {})) #type: ignore
             }
         trade_details.pop(trade.trade_id)
         del current_trade
@@ -501,8 +499,13 @@ async def manage_martingale(trade:TRADE)-> bool:
         return False
     logger.info(status)
     if result.upper() == "LOSS":
-        
-        closed_trades[trade.trade_id] = {
+        account_details.P_n_L_day = account_details.P_n_L_day - status["amount"]
+        account_details.lifespan = account_details.lifespan - status["amount"]
+        current_trade.level = current_trade.level + 1
+        if current_trade.level > risk_management.martingale_levels:
+            logger.warning(f"Max martingale levels reached for trade {trade.trade_id}. Ending martingale sequence.")
+            server_details = await api.closed_deals()
+            closed_trades[trade.trade_id] = {
             "trade_details":{
             "direction":current_trade.direction,
             "asset":current_trade.asset,
@@ -510,16 +513,10 @@ async def manage_martingale(trade:TRADE)-> bool:
             "level":current_trade.level,
             "signal_provider":current_trade.signal_provider,
             "result":"Loss",
-            "entry_time":current_trade.entry_time,
+            "entry_time":current_trade.entry_time.strftime("%Y-%m-%d %H:%M:%S"),
             "open_price":current_trade.open_price},
-            "from_server":api.closed_deals().get(trade.trade_id, {}) #type: ignore
+            "from_server":str(server_details.get(trade.trade_id, {})) #type: ignore
             }
-        account_details.P_n_L_day = account_details.P_n_L_day - status["amount"]
-        account_details.lifespan = account_details.lifespan - status["amount"]
-        current_trade.level = current_trade.level + 1
-        if current_trade.level > risk_management.martingale_levels:
-            logger.warning(f"Max martingale levels reached for trade {trade.trade_id}. Ending martingale sequence.")
-            # closed_trades[trade.trade_id] = {"trade_details":trade.trade_details,"result":"LOSS","from_server":status}
             trade_details.pop(trade.trade_id)
             del current_trade
             del trade
@@ -543,7 +540,19 @@ async def manage_martingale(trade:TRADE)-> bool:
                     check_win=False )
         except (Exception,KeyboardInterrupt) as e:
             logger.error(f"Error placing martingale trade for {current_trade.asset} {current_trade.direction}: {e}", exc_info=True)
-            # closed_trades[trade.trade_id] = {"trade_details":trade.trade_details,"result":"LOSS","from_server":status}
+            server_details = await api.closed_deals()
+            closed_trades[trade.trade_id] = {
+            "trade_details":{
+            "direction":current_trade.direction,
+            "asset":current_trade.asset,
+            "amount":current_trade.amount,
+            "level":current_trade.level,
+            "signal_provider":current_trade.signal_provider,
+            "result":"Loss",
+            "entry_time":current_trade.entry_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "open_price":current_trade.open_price},
+            "from_server":str(server_details.get(trade.trade_id, {})) #type: ignore
+            }
             account_details.P_n_L_day = float(account_details.P_n_L_day) - current_trade.amount
             account_details.lifespan = float(account_details.lifespan) - current_trade.amount
             trade_details.pop(trade.trade_id)
@@ -551,6 +560,19 @@ async def manage_martingale(trade:TRADE)-> bool:
             del trade
             return False
         logger.info(f"\n\n======Martingale Trade placed successfully.=======\n -Trade ID: {buy_id}\n-Details: {Details}\n\n")
+        server_details = await api.closed_deals()
+        closed_trades[trade.trade_id] = {
+            "trade_details":{
+            "direction":current_trade.direction,
+            "asset":current_trade.asset,
+            "amount":current_trade.amount,
+            "level":current_trade.level,
+            "signal_provider":current_trade.signal_provider,
+            "result":"Loss",
+            "entry_time":current_trade.entry_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "open_price":current_trade.open_price},
+            "from_server":str(server_details.get(trade.trade_id, {})) #type: ignore
+            }
         data = {
         "trade_id":buy_id,
         "trade_details":{"signal_provider": current_trade.signal_provider,
@@ -571,6 +593,7 @@ async def manage_martingale(trade:TRADE)-> bool:
     else:
         logger.info(f"Trade {trade.trade_id} won or tied. Martingale sequence completed.")
         print(f"==trade result==\n -Asset:{current_trade.asset}\n -lastest amount: {current_trade.amount}\n -martingale level: {current_trade.level}\n -profit/loss: {status["profit"]}\n")
+        server_details = await api.closed_deals()
         closed_trades[trade.trade_id] = {
             "trade_details":{
             "direction":current_trade.direction,
@@ -579,9 +602,9 @@ async def manage_martingale(trade:TRADE)-> bool:
             "level":current_trade.level,
             "signal_provider":current_trade.signal_provider,
             "result":"Won",
-            "entry_time":current_trade.entry_time,
+            "entry_time":current_trade.entry_time.strftime("%Y-%m-%d %H:%M:%S"),
             "open_price":current_trade.open_price},
-            "from_server":api.closed_deals().get(trade.trade_id, {}) #type: ignore
+            "from_server":str(server_details.get(trade.trade_id, {})) #type: ignore
             }
         trade_details.pop(trade.trade_id)
         del current_trade
