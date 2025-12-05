@@ -154,27 +154,50 @@ async function updateClosedTrades() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         let data = await res.json();
         console.log('Closed trades data:', data);
-        const trades = data.closed_trades || data.trades || data || [];
-        const list = Array.isArray(trades) ? trades : (typeof trades === 'object' ? Object.values(trades) : []);
-        if (!list.length) {
+        const trades = data.closed_trades || [];
+        if (!Object.keys(trades).length) {
             closedTradesElements.innerHTML = '<div class="empty">No closed trades</div>';
             return;
         }
-        closedTradesElements.innerHTML = list.map(t => {
-            const fmt = v => {
-                if (v === null || v === undefined) return '';
-                if (typeof v === 'number') return new Date(v * 1000).toLocaleString();
-                let d = Date.parse(v);
-                return isNaN(d) ? String(v) : new Date(d).toLocaleString();
-            };
+        let html = `<table class="closed_trade-table table"><thead><tr><th>Signal provider</th><th>Outcome</th><th>Asset</th><th>Direction</th><th>Entry time</th><th>Amount</th><th>Level</th><th>Open time</th></tr></thead><tbody>`;
+        html += Object.keys(trades).map(key => {
+
+            const t = trades[key];
+            let direction = '—';
+            if (t.trade_details.direction !== undefined && t.trade_details.direction !== null) {
+                if (t.trade_details.direction.toUpperCase() === 'BUY') {
+                    direction = '<span style="color:green;">BUY</span>';
+                } else if (t.trade_details.direction.toUpperCase() === 'SELL') {
+                    direction = '<span style="color:red;">SELL</span>';
+                }
+            }
+            let Outcome = '—';
+            if (t.trade_details.result !== undefined && t.trade_details.result !== null) {
+                if (t.trade_details.result.toUpperCase() === 'WON') {
+                    Outcome = '<span style="color:green;">WON</span>';
+                } else if (t.trade_details.result.toUpperCase() === 'LOSS') {
+                    Outcome = '<span style="color:red;">LOSS</span>';
+                }else{
+                    Outcome = t.trade_details.result;
+                }
+            }
+            // console.log(t.trade_details);
             return `
-                <div class="trade">
-                    <div><strong>${t.asset ?? '—'}</strong> ${t.direction ?? ''}</div>
-                    <div>Amount: ${t.amount ?? '—'} | Profit: ${t.profit ?? '—'}</div>
-                    <div>Opened: ${fmt(t.openedTime)} ${t.closedTime ? '| Closed: ' + fmt(t.closedTime) : ''}</div>
-                </div>
+                <tr>
+                <td>${t.trade_details.signal_provider ?? '—'}</td>
+                <td>${Outcome}</td>
+                    <td>${t.trade_details.asset ?? '—'}</td>
+                    <td>${direction}</td>
+                    <td>${t.trade_details.entry_time ?? '—'}</td>
+                    <td>${t.trade_details.amount ?? '—'}</td>
+                    <td>${t.trade_details.level ?? '—'}</td>
+                    <td>${t.trade_details.openedTime ?? '—'}</td>
+                </tr>
             `;
+
         }).join('');
+        html += '</tbody></table>'
+        closedTradesElements.innerHTML = html;
     } catch (error) {
         console.error('Error fetching closed trades:', error);
         closedTradesElements.innerHTML = '<div class="error">Error loading closed trades</div>';
