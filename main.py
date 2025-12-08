@@ -1,4 +1,5 @@
 import asyncio
+from random import random
 import pytz
 from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
@@ -102,7 +103,7 @@ account_details:ACCOUNT_DETAILS = ACCOUNT_DETAILS()
 risk_management:RISK_MANAGEMENT = RISK_MANAGEMENT()
 Signals:dict = {}
 trade_details:dict = {}
-# closed_trades:dict = {}
+closed_trades:dict = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -233,11 +234,6 @@ async def get_account_details():
 async def get_open_trades():
     global api,risk_management,trade_details
     # Ensure integer values are passed to get_candles (period and offset must be ints)
-    period = int(risk_management.timeframe) // (int(risk_management.timeframe)//10)
-    if period <= 0:
-        period = 1
-    offset = period * 5
-    
         
     try:
         async with asyncio.timeout(10):
@@ -246,8 +242,14 @@ async def get_open_trades():
         # # handle dict or list responses from the API
         trades_list = []
         for tid,data in openTrades.items(): #type: ignore
+            current_price = None
             async with asyncio.timeout(10):  # Set a 3-second timeout
-                current_price = await api.get_candles(data.get("asset"), period, offset)
+                subscription = await api.subscribe_symbol(data.get("asset"),)
+                async for candle in subscription:
+                    print(f" Close: {candle['close']}")
+                    current_price=candle['close']
+                    print(f"Current price for {data.get('asset')}: {current_price}")
+                    break  # We only need the latest candle
             trades_list.append({
                 "trade_id": data.get("id"),
                 "asset": data.get("asset"),
@@ -265,13 +267,12 @@ async def get_open_trades():
         logger.error(f"Error fetching open trades: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error fetching open trades: {e}")
 
-# @app.get("/closed_trades")
-# async def get_closed_trades():
-#     global closed_trades
-#     close_list = {}
-#     for Tsid in closed_trades:
-#         close_list[Tsid] = closed_trades[Tsid]
-#     return JSONResponse(status_code=status.HTTP_200_OK, content={"closed_trades": close_list})
+@app.get("/closed_trades")
+async def get_closed_trades():
+    global closed_trades
+    if len(closed_trades) >= 10:
+        closed_trades = dict(list(closed_trades.items())[-10:])
+    return JSONResponse(status_code=status.HTTP_200_OK, content={"closed_trades": closed_trades})
 
 @app.get("/current_signals", response_class=JSONResponse)
 async def get_current_signals():
@@ -295,19 +296,24 @@ async def get_current_signals():
 @app.post("/set_risk_management", response_class=JSONResponse  )
 async def set_risk_management(Risk: RISK_MANAGEMENT):
     global risk_management
-    if Risk.initial_amount and Risk.martingale_levels and Risk.martingale_multiplier and Risk.drawback_threshold and Risk.timeframe:
+    logger.info(f"Received risk management settings: {Risk}")
+    if Risk.initial_amount and Risk.martingale_levels and Risk.martingale_multiplier and Risk.drawback_threshold and Risk.timeframe and Risk.local_timezone:
         risk_management.initial_amount = Risk.initial_amount
         risk_management.martingale_levels = Risk.martingale_levels
         risk_management.martingale_multiplier = Risk.martingale_multiplier
         risk_management.drawback_threshold = Risk.drawback_threshold
         risk_management.timeframe = Risk.timeframe
+        risk_management.local_timezone = Risk.local_timezone
         return JSONResponse(status_code= status.HTTP_200_OK,content={f"message": "Risk managment values successfully set to: {risk_management}"})
     else:
         return JSONResponse(status_code= status.HTTP_400_BAD_REQUEST,content={f"message": "Risk managment values not set.Please ensure schema : {initial_amount,martingale_levels,martingale_multiplier,drawback_threshold,timeframe}"})
 @app.get("/get_risk_management", response_class=JSONResponse)
 async def get_risk_management():
     global risk_management
-    return JSONResponse(status_code= status.HTTP_200_OK,content={f"message": f"Risk managment values: {risk_management}"})
+    risk_management_values = {}
+    for key, value in risk_management.dict().items():
+        risk_management_values[key] = value        
+    return JSONResponse(status_code= status.HTTP_200_OK,content={"risk_values":risk_management_values})
 
 @app.post("/trade_signal")
 async def trade_signal_webhook(request: Request)->JSONResponse:
@@ -319,7 +325,7 @@ async def trade_signal_webhook(request: Request)->JSONResponse:
         logger.warning("P_n_L_day is below the threshold. Trade signal processing halted.")
         return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Trade signal processing halted due to P_n_L_day threshold."})
     try:
-        trade_data = parse_signal(text=raw_data)
+        trade_data = await parse_signal(text=raw_data)
         if not trade_data:
             #type: ignore
             return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Invalid trade signal data."})
@@ -330,7 +336,7 @@ async def trade_signal_webhook(request: Request)->JSONResponse:
     return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Trade signal received and processed successfully."})
     
 # Helper functions
-def parse_signal(text:str = "")->SIGNAL|bool:
+async def parse_signal(text:str = "")->SIGNAL|bool:
     global risk_management,Signals
     #parse signal data
     parsed_data = parse_macrodroid_trade_data(text)
@@ -382,18 +388,17 @@ def parse_signal(text:str = "")->SIGNAL|bool:
     
     signal_data = SIGNAL(**data)
     
-    logger.info(f"New signal received:{asset_name_for_po} {direction}. Initiating a new trade sequence. Initial Amount: ${risk_management.initial_amount}")
+    logger.info(f"New signal received:{asset_name_for_po} {direction}. Initiating a new trade sequence. Initial Amount: ${risk_management.initial_amount}")    
     try:
         if signal_data.signal_id not in Signals:
+            await asyncio.sleep(random() * 10)  # Small delay to ensure proper logging order
             Signals[signal_data.signal_id] = signal_data.signal_details
         else:
-            logger.warning(f"Signal for {asset_name_for_po} {direction} at {entryTime} from {signal_provider} already exists. Skipping duplicate signal.")
+            logger.warning(f"Signal for {signal_data.signal_details.asset} {signal_data.signal_details.direction} at {signal_data.signal_details.entry_time} from {signal_data.signal_details.signal_provider} already exists. Skipping duplicate signal.")
             return False
     except (Exception,KeyboardInterrupt) as e:
-        logger.error(f"Error placing trade for {asset_name_for_po} {direction}: {e}", exc_info=True)
-        del signal_data
-        return False
-    
+            logger.error(f"Error placing trade for {signal_data.signal_details.asset} {signal_data.signal_details.direction}: {e}", exc_info=True)
+            del signal_data
     if current_local_dt > target_local_dt + timedelta(seconds=1): # Allow a small buffer for late signals, e.g., up to 5 seconds past target entry time.
             logger.warning(f"Signal for {asset_name_for_po} {direction} (Entry: {entryTime}) arrived late. "
                        f"Current local time: {current_local_dt.strftime('%d-%m-%Y %H:%M:%S')}, Target local time: {target_local_dt.strftime('%d-%m-%Y %H:%M:%S')}. "
@@ -448,7 +453,9 @@ async def take_trade(signal:SIGNAL):
         "amount":float(Details["amount"])
             }
         }
+        
         trade = TRADE(**data)
+        await asyncio.sleep(random() * 10) 
         logger.info(f"trade details: {trade.trade_details}")
         trade_details[trade.trade_id] = trade.trade_details
         # try:
@@ -483,20 +490,45 @@ async def manage_martingale(trade:TRADE)-> bool:
         result = status["result"]
     except (Exception,KeyboardInterrupt) as e:
         logger.error(f"Error checking trade result for {trade.trade_id}: {e}", exc_info=True)
-        # closed_trades[trade.trade_id] = {"trade_details":trade.trade_details,"result":"LOSS","from_server":None}
+        server_details = await api.closed_deals()
+        await asyncio.sleep(random() * 10) 
+        closed_trades[trade.trade_id] = {
+            "trade_details":{
+            "direction":current_trade.direction,
+            "asset":current_trade.asset,
+            "amount":current_trade.amount,
+            "level":current_trade.level,
+            "signal_provider":current_trade.signal_provider,
+            "result":"unknown",
+            "entry_time":current_trade.entry_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "open_price":current_trade.open_price},
+            "from_server":str(server_details.get(trade.trade_id, {})) #type: ignore
+            }
         trade_details.pop(trade.trade_id)
         del current_trade
         del trade
         return False
     logger.info(status)
     if result.upper() == "LOSS":
-        # closed_trades[trade.trade_id] = {"trade_details":trade.trade_details,"result":"LOSS","from_server":status}
         account_details.P_n_L_day = account_details.P_n_L_day - status["amount"]
         account_details.lifespan = account_details.lifespan - status["amount"]
         current_trade.level = current_trade.level + 1
         if current_trade.level > risk_management.martingale_levels:
             logger.warning(f"Max martingale levels reached for trade {trade.trade_id}. Ending martingale sequence.")
-            # closed_trades[trade.trade_id] = {"trade_details":trade.trade_details,"result":"LOSS","from_server":status}
+            await asyncio.sleep(random() * 10) 
+            server_details = await api.closed_deals()
+            closed_trades[trade.trade_id] = {
+            "trade_details":{
+            "direction":current_trade.direction,
+            "asset":current_trade.asset,
+            "amount":current_trade.amount/risk_management.martingale_multiplier,
+            "level":current_trade.level-1,
+            "signal_provider":current_trade.signal_provider,
+            "result":"Loss",
+            "entry_time":current_trade.entry_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "open_price":current_trade.open_price},
+            "from_server":str(server_details.get(trade.trade_id, {})) #type: ignore
+            }
             trade_details.pop(trade.trade_id)
             del current_trade
             del trade
@@ -520,7 +552,20 @@ async def manage_martingale(trade:TRADE)-> bool:
                     check_win=False )
         except (Exception,KeyboardInterrupt) as e:
             logger.error(f"Error placing martingale trade for {current_trade.asset} {current_trade.direction}: {e}", exc_info=True)
-            # closed_trades[trade.trade_id] = {"trade_details":trade.trade_details,"result":"LOSS","from_server":status}
+            await asyncio.sleep(random() * 10) 
+            server_details = await api.closed_deals()
+            closed_trades[trade.trade_id] = {
+            "trade_details":{
+            "direction":current_trade.direction,
+            "asset":current_trade.asset,
+            "amount":current_trade.amount/risk_management.martingale_multiplier,
+            "level":current_trade.level-1,
+            "signal_provider":current_trade.signal_provider,
+            "result":"Loss",
+            "entry_time":current_trade.entry_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "open_price":current_trade.open_price},
+            "from_server":str(server_details.get(trade.trade_id, {})) #type: ignore
+            }
             account_details.P_n_L_day = float(account_details.P_n_L_day) - current_trade.amount
             account_details.lifespan = float(account_details.lifespan) - current_trade.amount
             trade_details.pop(trade.trade_id)
@@ -528,6 +573,20 @@ async def manage_martingale(trade:TRADE)-> bool:
             del trade
             return False
         logger.info(f"\n\n======Martingale Trade placed successfully.=======\n -Trade ID: {buy_id}\n-Details: {Details}\n\n")
+        await asyncio.sleep(random() * 10) 
+        server_details = await api.closed_deals()
+        closed_trades[trade.trade_id] = {
+            "trade_details":{
+            "direction":current_trade.direction,
+            "asset":current_trade.asset,
+            "amount":current_trade.amount/risk_management.martingale_multiplier,
+            "level":current_trade.level-1,
+            "signal_provider":current_trade.signal_provider,
+            "result":"Loss",
+            "entry_time":current_trade.entry_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "open_price":current_trade.open_price},
+            "from_server":str(server_details.get(trade.trade_id, {})) #type: ignore
+            }
         data = {
         "trade_id":buy_id,
         "trade_details":{"signal_provider": current_trade.signal_provider,
@@ -548,7 +607,20 @@ async def manage_martingale(trade:TRADE)-> bool:
     else:
         logger.info(f"Trade {trade.trade_id} won or tied. Martingale sequence completed.")
         print(f"==trade result==\n -Asset:{current_trade.asset}\n -lastest amount: {current_trade.amount}\n -martingale level: {current_trade.level}\n -profit/loss: {status["profit"]}\n")
-        # closed_trades[trade.trade_id] = {"trade_details":trade.trade_details,"result":"WON","from_server":status}
+        await asyncio.sleep(random() * 10) 
+        server_details = await api.closed_deals()
+        closed_trades[trade.trade_id] = {
+            "trade_details":{
+            "direction":current_trade.direction,
+            "asset":current_trade.asset,
+            "amount":current_trade.amount,
+            "level":current_trade.level,
+            "signal_provider":current_trade.signal_provider,
+            "result":"Won",
+            "entry_time":current_trade.entry_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "open_price":current_trade.open_price},
+            "from_server":str(server_details.get(trade.trade_id, {})) #type: ignore
+            }
         trade_details.pop(trade.trade_id)
         del current_trade
         del trade

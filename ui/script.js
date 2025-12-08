@@ -41,39 +41,33 @@ async function updateOpenTrades() {
         let html = `<table class="trades-table table"><thead><tr><th>Direction</th><th>Asset</th><th>Amount</th><th>Open Price</th><th>Points</th><th>Profit</th><th>Total Returns</th><th>Opened time</th></tr></thead><tbody>`;
         html += trades.map(t => {
             // support both naming schemes (current_price or currentPrice)
-            const priceArray = Array.isArray(t.current_price) ? t.current_price : (Array.isArray(t.currentPrice) ? t.currentPrice : []);
-            const lastPriceObj = priceArray.length ? priceArray[priceArray.length - 1] : null;
+            // const priceArray = Array.isArray(t.current_price) ? t.current_price : (Array.isArray(t.currentPrice) ? t.currentPrice : []);
+            // const lastPriceObj = priceArray.length ? priceArray[priceArray.length - 1] : null;
             // console.log('Last price object for trade:', lastPriceObj);
             // robust last-close extraction with fallbacks
-            let lastClose = lastPriceObj
-                ? (typeof lastPriceObj.close !== 'undefined' && lastPriceObj.close !== null ? Number(lastPriceObj.close)
-                    : (typeof lastPriceObj.c !== 'undefined' && lastPriceObj.c !== null ? Number(lastPriceObj.c)
-                    : (typeof lastPriceObj.price !== 'undefined' && lastPriceObj.price !== null ? Number(lastPriceObj.price)
-                    : (typeof lastPriceObj.open !== 'undefined' && lastPriceObj.open !== null ? Number(lastPriceObj.open) : NaN))))
-                : (typeof t.current_price === 'number' ? Number(t.current_price) : (typeof t.currentPrice === 'number' ? Number(t.currentPrice) : NaN));
-            // console.log(`Extracted last close price: ${lastClose}`);
             let openPrice = t.openPrice !== undefined ? Number(t.openPrice) : (t.open_price !== undefined ? Number(t.open_price) : NaN);
             const amount = (t.amount !== undefined && t.amount !== null) ? t.amount : '—';
             const profit = (t.profit !== undefined && t.profit !== null) ? t.profit : '—';
             // console.log(`Trade details - Open Price: ${openPrice}, Amount: ${amount}, Profit: ${profit}`);
             // compute points safely using the lastClose value
+            lastClose = t.current_price !== undefined ? Number(t.current_price) : (t.currentPrice !== undefined ? Number(t.currentPrice) : NaN);
             let pointsHtml = '—';
             console.log(`Calculating points for trade. Last Close: ${lastClose}, Open Price: ${openPrice}, Direction: ${t.direction}`);
             if (!isNaN(lastClose) && !isNaN(openPrice)) {
-                lastClose = lastClose;
-                openPrice = openPrice;
-                if (t.direction === "BUY") {
+                // lastClose = lastClose;
+                // openPrice = openPrice;
+                if (t.direction.toUpperCase() === "BUY") {
                     const diff = lastClose - openPrice;
-                    const formatted =Math.abs(Math.round(diff*1000)); // optional formatting
+                    const formatted =Math.abs(Math.round(diff*100000)); // optional formatting
                     pointsHtml = diff >= 0 ? `<span style="color:green;">${formatted}</span>` : `<span style="color:red;">${formatted}</span>`;
-                } else if (t.direction === "SELL") {
+                } else if (t.direction.toUpperCase() === "SELL") {
                     const diff = openPrice-lastClose ;
-                    const formatted = Math.abs(Math.round(diff/1000)); // optional formatting
+                    const formatted = Math.abs(Math.round(diff*100000)); // optional formatting
                     pointsHtml = diff >= 0 ? `<span style="color:green;">${formatted}</span>` : `<span style="color:red;">${formatted}</span>`;
                 } else {
                     const diff = lastClose - openPrice;
-                    const formatted  =Math.abs(Math.round(diff/1000)); // optional formatting
-                    pointsHtml = String(formatted);
+                    const formatted  =Math.abs(Math.round(diff*100000)); // optional formatting
+                    pointsHtml =`${formatted} `;
                 }
             }
             // console.log(`Calculated points HTML: ${pointsHtml}`);
@@ -208,16 +202,69 @@ async function updateRiskData() {
         let res = await fetch('/get_risk_management');
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         let data = await res.json();
-        const msg = data.message ?? JSON.stringify(data);
-        const el = document.getElementById('risk-result');
-        if (el) el.textContent = msg;
+        // console.log('Risk management data:', data);
+        // const msg = JSON.parse(`${data}`);
+        data = data.risk_values || {};
+        for (const key in data) {
+            const el = document.getElementById(`${key}-risk-result`);
+            // console.log(`Updating risk data for ${key}:`, data[key]);
+            if (el) el.textContent = data[key];
+        }
     } catch (error) {
         console.error('Error fetching risk data:', error);
         const el = document.getElementById('risk-result');
         if (el) el.textContent = 'Error loading risk data';
     }
 }
-
+async function setRiskData(form) {
+    try {
+        const formData = new FormData(form);
+        const payload = {};
+        formData.forEach((value, key) => {
+            if(key=="drawback_threshold"){
+                payload[key] = 0 - parseInt(value);
+            }else if(key=="local_timezone"){
+                console.log('Processing timezone value:', value);
+                if (value.slice()[0] == "+") {
+                    payload[key]= `Etc/GMT-${value.slice(1)}`;
+                }else if (value.slice()[0] == "-") {
+                    payload[key]= `Etc/GMT+${value.slice(1)}`;
+                }else{
+                    document.getElementById(`${key}-input`).value = "";
+                    alert("Please enter timezone in +HH or -HH format");
+                    return;
+                }
+            }else{
+                if(isNaN(payload[key]) ){
+                    alert("Please enter valid numeric values for all fields.");
+                    return
+                }
+                payload[key] = value;
+            }
+            
+        }); 
+        let res = await fetch('/set_risk_management', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        console.log('Set risk management response:', data);
+        document.getElementById('risk-form-element').reset();
+        document.getElementById("popup_bg").classList.toggle('hidden');
+        updateRiskData();
+    } catch (error) {
+        console.error('Error setting risk data:', error);
+    }
+    
+}
+const form = document.getElementById('popup_bg');
+async function showriskform(){
+    form.classList.toggle('hidden');
+}
 document.addEventListener('DOMContentLoaded', () => {
     updateBalance();
     updateOpenTrades();

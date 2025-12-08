@@ -1,32 +1,35 @@
 <!doctype html>
 <html lang="en">
+
 <head>
 	<meta charset="utf-8" />
 	<meta name="viewport" content="width=device-width,initial-scale=1" />
 	<title>Signal Bot UI</title>
 	<link rel="stylesheet" href="/ui/styles.css" />
 	<!-- Placeholder favicon (inline SVG data URI) -->
-	<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Crect%20width='100'%20height='100'%20fill='%23007acc'/%3E%3Ctext%20x='50'%20y='65'%20font-size='60'%20text-anchor='middle'%20fill='white'%20font-family='Arial'%3ES%3C/text%3E%3C/svg%3E" />
+	<link rel="icon"
+		href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Crect%20width='100'%20height='100'%20fill='%23007acc'/%3E%3Ctext%20x='50'%20y='65'%20font-size='60'%20text-anchor='middle'%20fill='white'%20font-family='Arial'%3ES%3C/text%3E%3C/svg%3E" />
 
 
 </head>
+
 <body>
 	<header>
 		<h1>Signal Bot Dashboard</h1>
-        <button type="button">🌚</button>
+		<button type="button">🌚</button>
 	</header>
 	<section id="account">
-        <h2 class="card-title"><span id="account-type" >Demo</span> Account</h2>
-        <div class="card-horizontal" class="card">
-            <div class="card-display-text">Balance: <span id="balance-result">—</span></div>
-            <div class="card-display-text">Daily P/L: <span id="P_n_L_day-result">—</span></div>
-            <div class="card-display-text">Lifespan: <span id="lifespan-result">—</span></div>
-        </div>
+		<h2 class="card-title"><span id="account-type">Demo</span> Account</h2>
+		<div class="card-horizontal" class="card">
+			<div class="card-display-text">Balance: <span id="balance-result">—</span></div>
+			<div class="card-display-text">Daily P/L: <span id="P_n_L_day-result">—</span></div>
+			<div class="card-display-text">Lifespan: <span id="lifespan-result">—</span></div>
+		</div>
 
 	</section>
 	<section id="open-trades">
 		<h2 class="card-title">Open Trades</h2>
-		<div id="open-trades-result"class="table-div">Loading...</div>
+		<div id="open-trades-result" class="table-div">Loading...</div>
 	</section>
 
 	<section id="current-signals">
@@ -39,11 +42,49 @@
 		<div id="closed-trades-result" class="table-div">Loading...</div>
 	</section>
 
-    <section id="risk">
-		<h2>Risk</h2>
-		<div id="risk-result">—</div>
+	<section id="risk">
+		<h2 class="card-title">Risk</h2>
+		<div class="card-horizontal" id="risk-result">
+			<div class="card-display-text">Initial amount: <span id="initial_amount-risk-result">—</span></div>
+			<div class="card-display-text">martingale level: <span id="martingale_levels-risk-result">—</span></div>
+			<div class="card-display-text">martingale multiplier: <span id="martingale_multiplier-risk-result">—</span>
+			</div>
+			<div class="card-display-text">timeframe: <span id="timeframe-risk-result">—</span></div>
+			<div class="card-display-text">timezone: <span id="local_timezone-risk-result">—</span></div>
+			<div class="card-display-text">drawback threshold: <span id="drawback_threshold-risk-result">—</span></div>
+		</div>
+		<button id="set-risk-button" type="button" onclick=showriskform()>Set Risk Management</button>
 	</section>
+	<div id="popup_bg" class="popup_bg hidden">
 
+		<div id="risk_form">
+			<h2 class="card-title">Set Risk Management</h2>
+			<form id="risk-form-element">
+				<label for="initial_amount-input">Initial amount:</label>
+				<input type="number" step="2" id="initial_amount-input" name="initial_amount" required />
+
+				<label for="martingale_level-input">Martingale levels:</label>
+				<input type="number" step="1" id="martingale_level-input" name="martingale_levels" required />
+
+				<label for="martingale_multiplier-input">Martingale multiplier:</label>
+				<input type="number" step="1" id="martingale_multiplier-input" name="martingale_multiplier"
+					required />
+
+				<label for="timeframe-input">Timeframe:</label>
+				<input type="number" step="10" id="timeframe-input" name="timeframe" required />
+
+				<label for="local_timezone-input">Timezone:</label>
+				<input type="text" id="local_timezone-input" name="local_timezone" required />
+
+				<label for="drawback_threshold-input">Drawback threshold:</label>
+				<input type="number" step="1" id="drawback_threshold-input" name="drawback_threshold" required />
+
+				<button type="button" onclick="setRiskData(form)">Submit</button>
+				<button type="button" id="cancel-risk-button" onclick=showriskform()>Cancel</button>
+			</form>
+		</div>
+	</div>
 	<script src="/ui/script.js" defer></script>
 </body>
+
 </html>
