@@ -83,7 +83,7 @@ section {
 .card-horizontal {
     display: flex;
     flex-direction: row;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: center;
     gap: 12px;
