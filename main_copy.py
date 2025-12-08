@@ -268,6 +268,8 @@ async def get_open_trades():
 @app.get("/closed_trades")
 async def get_closed_trades():
     global closed_trades
+    if len(closed_trades) >= 10:
+        closed_trades = dict(list(closed_trades.items())[-10:])
     return JSONResponse(status_code=status.HTTP_200_OK, content={"closed_trades": closed_trades})
 
 @app.get("/current_signals", response_class=JSONResponse)
@@ -379,18 +381,7 @@ def parse_signal(text:str = "")->SIGNAL|bool:
     
     signal_data = SIGNAL(**data)
     
-    logger.info(f"New signal received:{asset_name_for_po} {direction}. Initiating a new trade sequence. Initial Amount: ${risk_management.initial_amount}")
-    try:
-        if signal_data.signal_id not in Signals:
-            Signals[signal_data.signal_id] = signal_data.signal_details
-        else:
-            logger.warning(f"Signal for {asset_name_for_po} {direction} at {entryTime} from {signal_provider} already exists. Skipping duplicate signal.")
-            return False
-    except (Exception,KeyboardInterrupt) as e:
-        logger.error(f"Error placing trade for {asset_name_for_po} {direction}: {e}", exc_info=True)
-        del signal_data
-        return False
-    
+    logger.info(f"New signal received:{asset_name_for_po} {direction}. Initiating a new trade sequence. Initial Amount: ${risk_management.initial_amount}")    
     if current_local_dt > target_local_dt + timedelta(seconds=1): # Allow a small buffer for late signals, e.g., up to 5 seconds past target entry time.
             logger.warning(f"Signal for {asset_name_for_po} {direction} (Entry: {entryTime}) arrived late. "
                        f"Current local time: {current_local_dt.strftime('%d-%m-%Y %H:%M:%S')}, Target local time: {target_local_dt.strftime('%d-%m-%Y %H:%M:%S')}. "
@@ -445,6 +436,15 @@ async def take_trade(signal:SIGNAL):
         "amount":float(Details["amount"])
             }
         }
+        try:
+            if signal.signal_id not in Signals:
+                Signals[signal.signal_id] = signal.signal_details
+            else:
+                logger.warning(f"Signal for {signal.signal_details.asset} {signal.signal_details.direction} at {signal.signal_details.entry_time} from {signal.signal_details.signal_provider} already exists. Skipping duplicate signal.")
+                return False
+        except (Exception,KeyboardInterrupt) as e:
+            logger.error(f"Error placing trade for {signal.signal_details.asset} {signal.signal_details.direction}: {e}", exc_info=True)
+            del signal_data
         trade = TRADE(**data)
         logger.info(f"trade details: {trade.trade_details}")
         trade_details[trade.trade_id] = trade.trade_details
@@ -509,8 +509,8 @@ async def manage_martingale(trade:TRADE)-> bool:
             "trade_details":{
             "direction":current_trade.direction,
             "asset":current_trade.asset,
-            "amount":current_trade.amount,
-            "level":current_trade.level,
+            "amount":current_trade.amount/risk_management.martingale_multiplier,
+            "level":current_trade.level-1,
             "signal_provider":current_trade.signal_provider,
             "result":"Loss",
             "entry_time":current_trade.entry_time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -545,8 +545,8 @@ async def manage_martingale(trade:TRADE)-> bool:
             "trade_details":{
             "direction":current_trade.direction,
             "asset":current_trade.asset,
-            "amount":current_trade.amount,
-            "level":current_trade.level,
+            "amount":current_trade.amount/risk_management.martingale_multiplier,
+            "level":current_trade.level-1,
             "signal_provider":current_trade.signal_provider,
             "result":"Loss",
             "entry_time":current_trade.entry_time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -565,8 +565,8 @@ async def manage_martingale(trade:TRADE)-> bool:
             "trade_details":{
             "direction":current_trade.direction,
             "asset":current_trade.asset,
-            "amount":current_trade.amount,
-            "level":current_trade.level,
+            "amount":current_trade.amount/risk_management.martingale_multiplier,
+            "level":current_trade.level-1,
             "signal_provider":current_trade.signal_provider,
             "result":"Loss",
             "entry_time":current_trade.entry_time.strftime("%Y-%m-%d %H:%M:%S"),

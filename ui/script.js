@@ -191,7 +191,7 @@ async function updateClosedTrades() {
                     <td>${t.trade_details.entry_time ?? '—'}</td>
                     <td>${t.trade_details.amount ?? '—'}</td>
                     <td>${t.trade_details.level ?? '—'}</td>
-                    <td>${t.trade_details.openedTime ?? '—'}</td>
+                    <td>${t.trade_details.entry_time ?? '—'}</td>
                 </tr>
             `;
 
