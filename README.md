@@ -39,7 +39,7 @@
   - Choose **Import** and navigate to the `Macrodroid/MacroDroid.mdr` file (copy it to your device first or access via a shared folder).
   - Import the file and grant any prompts.
   - After import, open **Variables** in MacroDroid and update the following global variables:
-	 - `ngrok_url` : the public Ngrok forwarding URL (see below) plus the `trade_signal` path if needed (example: `https://<your-id>.ngrok.io/trade_signal`).
+   - `tunnel_url` : the public tunneling forwarding URL (from localtunnel) plus the `trade_signal` path if needed (example: `https://<your-id>.loca.lt/trade_signal`).
 	- `signal_provider` : (optional) default provider name this device will report as.
 	- `timezone` : must be in pytz format (example: `Etc/GMT-2` for GMT+2). This is used when MacroDroid posts the signal so the server can convert entry times correctly.
    - more info in `Macrodroid/README.md`.
@@ -62,9 +62,11 @@
 3. Run the app with Uvicorn (replace PORT):
 	- `uvicorn main:app --port <PORT>`
 
-**Ngrok (webhook) setup**
-- Start ngrok on the same machine and forward the port you run the app on, e.g.: `ngrok http <PORT>`.
-- Copy the public forwarding URL (e.g. `https://<id>.ngrok.io`) and paste into MacroDroid variable `ngrok_url`. If MacroDroid expects a path, append `/trade_signal`.
+**Localtunnel (webhook) setup**
+- Install Node.js (if not already installed) so you have `npm` available.
+- Install `localtunnel` globally: `npm install -g localtunnel`.
+- Start a tunnel from the same machine and forward the port you run the app on, e.g.: `lt --port <PORT>` (or `lt <PORT>`).
+- Copy the public forwarding URL returned by `lt` (e.g. `https://<id>.loca.lt`) and paste into MacroDroid variable `tunnel_url`. If MacroDroid expects a path, append `/trade_signal`.
 - Use the `test signal` MacroDroid widget to send a test webhook and verify the FastAPI logs show the incoming request.
 
 **Test signal**
