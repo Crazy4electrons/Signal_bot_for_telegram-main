@@ -8,7 +8,29 @@
 - **`drivers/`**: download edge browser driver and insert in this file if driver is outdated.
 
 **Purpose**
-- This project receives trading signals (via MacroDroid -> webhook), parses them, and places trades on Pocket Option using an async API client. The FastAPI server exposes a small set of endpoints for status and webhook intake.
+- This project receives trading signals directly from a Telegram channel, or through the optional MacroDroid webhook fallback, parses them, and places trades on Pocket Option using an async API client. The FastAPI server exposes a small set of endpoints for status and webhook intake.
+
+**Direct Telegram Listener**
+
+The direct listener uses a Telegram user session because a bot cannot read a channel that the account only subscribes to. Create API credentials at `my.telegram.org`, then configure `.env`:
+
+```text
+TELEGRAM_LISTENER_ENABLED=true
+TELEGRAM_API_ID=your_api_id
+TELEGRAM_API_HASH=your_api_hash
+TELEGRAM_SOURCE_CHANNEL=@signal_channel
+TELEGRAM_SESSION_PATH=data/telegram_signal_bot
+TELEGRAM_SIGNAL_PROVIDER=telegram
+SIGNAL_TIMEZONE=Etc/GMT-2
+```
+
+Install dependencies with `uv sync`, authenticate once on the VPS with `python telegram_login.py`, then start the service normally with `uvicorn main:app`. The phone and MacroDroid are not needed after the session is created. Keep the generated `.session` file private and never commit it.
+
+Telegram posts should contain an asset such as `EUR/USD OTC`, a time such as `19:55`, and a direction such as `BUY` or `CALL`. Provider and timezone default to the environment values above when omitted. New message IDs are persisted in SQLite so reconnects do not place duplicate trades.
+
+The current implementation keeps MacroDroid available through `POST /trade_signal`; it is an optional fallback, not a requirement for direct Telegram operation.
+
+The broker client is pinned to `binaryoptionstoolsv2==0.2.15`. Older `0.2.1` source artifacts fail to build because their package manifest points to a missing `BinaryOptionsToolsV2/Cargo.toml` path.
 
 **Endpoints & Functions (what exists)**
 - `GET /` : serves UI index (redirects to `/ui/` when `ui/index.html` exists).

@@ -1,5 +1,5 @@
-import re
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -76,44 +76,38 @@ logger = logging.getLogger(__name__)
 #     logger.info(f"Successfully parsed raw notification into: {parsed_data}")
 #     return parsed_data
 
-def parse_macrodroid_trade_data(text: str)->dict:
-    """
-    Extracts trading signal details from raw text, ignoring emojis and extra lines.
-    """
-    # 1. Define Regex Patterns
-    # Asset: Looks for 3 letters, forward slash, 3 letters (e.g., EUR/USD)
-    # The \b ensures we don't match inside other words, but ignores emojis.
-    asset_pattern = r'\b([a-zA-Z]{3}/[a-zA-Z]{3})\b'
-    
-    # Time: Looks for HH:MM (e.g., 19:55)
-    time_pattern = r'\b(\d{1,2}:\d{2})\b'
-    
-    # Direction: buy/sell/call/put (case insensitive)
-    direction_pattern = r'\b(buy|sell|call|put)\b'
-    
-    # Provider: Adjusted to match 'signal_provider="value"' based on your example
-    provider_pattern = r'signal_provider="(.+?)"'
-    
-    timezone_pattern = r'timezone="(Etc/GMT[+-]\d{1,2})"'
+def parse_macrodroid_trade_data(text: str) -> dict[str, str | None]:
+    """Parse the common signal format from MacroDroid or Telegram.
 
-    # 2. Execute Searches
-    asset_match = re.search(asset_pattern, text)
-    time_match = re.search(time_pattern, text)
-    direction_match = re.search(direction_pattern, text, re.IGNORECASE)
-    provider_match = re.search(provider_pattern, text)
-    
-    timezone_match = re.search(timezone_pattern, text)
+    Telegram posts often omit the explicit ``signal_provider`` and ``timezone``
+    fields, so those values can be filled from environment configuration.
+    Missing trading directions and entry times are never guessed.
+    """
+    asset_match = re.search(r"\b([A-Za-z]{3})\s*/\s*([A-Za-z]{3})(?:\s+(OTC))?\b", text)
+    time_match = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", text)
+    direction_match = re.search(r"\b(buy|sell|call|put)\b", text, re.IGNORECASE)
+    provider_match = re.search(r"signal_provider\s*=\s*[\"']([^\"']+)[\"']", text, re.IGNORECASE)
+    timezone_match = re.search(r"timezone\s*=\s*[\"']([^\"']+)[\"']", text, re.IGNORECASE)
 
-    # 3. Construct Dictionary
-    result = {
-        "asset": asset_match.group(1).upper().replace("/","") if asset_match else None,
-        "time": time_match.group(1) if time_match else None,
-        "direction": direction_match.group(1).lower() if direction_match else None,
-        "signal_provider": provider_match.group(1) if provider_match else None,
-        "timezone": timezone_match.group(1) if timezone_match else None
+    asset = None
+    if asset_match:
+        asset = f"{asset_match.group(1)}{asset_match.group(2)}".upper()
+        if asset_match.group(3) or re.search(r"\bOTC\b", text, re.IGNORECASE):
+            asset = f"{asset}_otc"
+
+    direction = direction_match.group(1).upper() if direction_match else None
+    if direction == "BUY":
+        direction = "CALL"
+    elif direction == "SELL":
+        direction = "PUT"
+
+    return {
+        "asset": asset,
+        "time": f"{time_match.group(1)}:{time_match.group(2)}" if time_match else None,
+        "direction": direction,
+        "signal_provider": provider_match.group(1).strip() if provider_match else None,
+        "timezone": timezone_match.group(1).strip() if timezone_match else None,
     }
-
-    return result
 
 # --- Testing with your Example ---
 

@@ -13,5 +13,7 @@ telegram_bot.py
 .DS_Store
 logs
 *.log
+data/
+*.session
 uv.lock
 BinaryOptionsTools-v2

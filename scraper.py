@@ -2,10 +2,12 @@
 
 import os
 import json
+import shutil
 import time
 import re
 import logging
 import urllib.parse
+from getpass import getpass
 from typing import cast, List, Dict, Any, Optional
 
 from selenium import webdriver
@@ -19,10 +21,8 @@ from dotenv import load_dotenv # Import dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-# --- MANUAL EDGE DRIVER PATH ---
-# This path must point to your msedgedriver.exe
-MANUAL_EDGEDRIVER_PATH = r".\\Drivers\\msedgedriver.exe"
-# -------------------------------
+# Set EDGE_DRIVER in .env only when Selenium Manager cannot download a matching driver.
+MANUAL_EDGEDRIVER_PATH = os.getenv("EDGE_DRIVER")
 
 # Configure logging for this script.
 logging.basicConfig(
@@ -81,6 +81,20 @@ def get_pocketoption_session_data(email: str, password: str, account_type: str) 
     edge_options.add_argument("--disable-extensions")
     edge_options.add_argument("--disable-background-networking")
 
+    edge_binary = (
+        os.getenv("EDGE_BINARY")
+        or shutil.which("microsoft-edge-stable")
+        or shutil.which("microsoft-edge")
+    )
+    if edge_binary:
+        edge_options.binary_location = edge_binary
+        logger.info("Using Edge browser binary: %s", edge_binary)
+    else:
+        raise RuntimeError(
+            "Microsoft Edge was not found. Install microsoft-edge-stable "
+            "or set EDGE_BINARY in .env."
+        )
+
     # Enable performance logging for Edge (CRITICAL for capturing WebSocket traffic)
     edge_options.set_capability("ms:loggingPrefs", {"performance": "ALL"})
 
@@ -88,8 +102,13 @@ def get_pocketoption_session_data(email: str, password: str, account_type: str) 
     session_data = {"ssid": str(None), "uid": None}
 
     try:
-        service = Service(MANUAL_EDGEDRIVER_PATH)
-        driver = webdriver.Edge(service=service, options=edge_options)
+        if MANUAL_EDGEDRIVER_PATH:
+            logger.info("Using manually configured Edge WebDriver: %s", MANUAL_EDGEDRIVER_PATH)
+            service = Service(MANUAL_EDGEDRIVER_PATH)
+            driver = webdriver.Edge(service=service, options=edge_options)
+        else:
+            logger.info("Using Selenium Manager to select a WebDriver matching the installed Edge version.")
+            driver = webdriver.Edge(options=edge_options)
         logger.info("Microsoft Edge WebDriver initialized successfully.")
 
         login_url = "https://pocketoption.com/en/login/"
@@ -244,7 +263,7 @@ if __name__ == "__main__":
             i = 0
             while True:
                 email = input("PO_EMAIL: ")
-                password  = input("PO_PASSWORD: ")
+                password = getpass("PO_PASSWORD: ")
                 if email and password:
                     save_credentials = input("Save these credentials to .env file? (y/n): ").strip().lower()
                     if save_credentials == 'y':
@@ -272,11 +291,13 @@ if __name__ == "__main__":
         session_info = get_pocketoption_session_data(email, password, user_choice) # Pass account_type to the function
         if session_info["ssid"] and session_info["uid"]:
             logger.info(f"SSID and UID extraction completed for {user_choice} account.")
+            next_refresh_seconds = refresh_interval_seconds
         else:
             logger.error(f"Failed to extract SSID and/or UID for {user_choice} account.")
-        if refresh_interval_minutes >60:
-            logger.info(f"Waiting {refresh_interval_minutes/60} hours and {refresh_interval_minutes%60} minutes before next SSID refresh attempt.")
+            next_refresh_seconds = 60
+        if next_refresh_seconds > 60:
+            logger.info(f"Waiting {next_refresh_seconds / 3600:.1f} hours before next SSID refresh attempt.")
         else:
-            logger.info(f"Waiting {refresh_interval_minutes} minutes before next SSID refresh attempt.")
+            logger.info(f"Waiting {next_refresh_seconds} seconds before next SSID refresh attempt.")
             
-        time.sleep(refresh_interval_seconds)
+        time.sleep(next_refresh_seconds)

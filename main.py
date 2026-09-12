@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from BinaryOptionsToolsV2.pocketoption import PocketOptionAsync
 from parse_data import parse_macrodroid_trade_data
+from telegram_listener import TelegramSignalListener
 import os
 from pydantic import BaseModel, Field
 
@@ -26,12 +27,17 @@ logging.basicConfig(level="DEBUG", handlers=[RichHandler()])
 logger = logging.getLogger("PO_Signal")
 
 class RISK_MANAGEMENT(BaseModel):
-    initial_amount: float = 1
-    martingale_levels: int = 3
-    martingale_multiplier: int = 2
+    initial_amount: float = Field(default=1, gt=0)
+    martingale_levels: int = Field(default=3, ge=0)
+    martingale_multiplier: float = Field(default=2, ge=1)
     drawback_threshold: int = -16
-    timeframe:  int = 300
+    timeframe: int = Field(default=300, gt=0)
     local_timezone: str = 'Etc/GMT-2'
+    martingale_enabled: bool = True
+    max_trade_amount: float = Field(default=16, gt=0)
+    max_sequence_exposure: float = Field(default=31, gt=0)
+    max_open_trades: int = Field(default=1, ge=1)
+    min_balance_reserve: float = Field(default=0, ge=0)
 
 class ACCOUNT_DETAILS(BaseModel):
     balance: float=0.0
@@ -100,18 +106,97 @@ class SIGNAL(BaseModel):
     signal_details:SIGNAL_FIELDS
 
 account_details:ACCOUNT_DETAILS = ACCOUNT_DETAILS()
-risk_management:RISK_MANAGEMENT = RISK_MANAGEMENT()
+
+
+def load_risk_management() -> RISK_MANAGEMENT:
+    values: dict[str, Any] = {}
+    environment_types = {
+        "initial_amount": float,
+        "martingale_levels": int,
+        "martingale_multiplier": float,
+        "drawback_threshold": int,
+        "timeframe": int,
+        "local_timezone": str,
+        "martingale_enabled": lambda value: value.lower() in {"1", "true", "yes"},
+        "max_trade_amount": float,
+        "max_sequence_exposure": float,
+        "max_open_trades": int,
+        "min_balance_reserve": float,
+    }
+    for name, converter in environment_types.items():
+        value = os.getenv(name.upper())
+        if value is not None and value != "":
+            values[name] = converter(value)
+    return RISK_MANAGEMENT(**values)
+
+
+risk_management:RISK_MANAGEMENT = load_risk_management()
 Signals:dict = {}
 trade_details:dict = {}
 closed_trades:dict = {}
+telegram_listener: TelegramSignalListener | None = None
+telegram_listener_task: asyncio.Task | None = None
+api: PocketOptionAsync | None = None
+broker_connected = False
+
+
+def martingale_exposure(initial_amount: float, multiplier: float, levels: int) -> float:
+    """Return the maximum amount risked across the initial trade and recoveries."""
+    return sum(initial_amount * multiplier**level for level in range(levels + 1))
+
+
+def risk_rejection(reason: str) -> None:
+    logger.warning("Trade rejected by risk controls: %s", reason)
+
+
+def can_start_trade(amount: float) -> tuple[bool, str]:
+    if not risk_management.martingale_enabled and amount != risk_management.initial_amount:
+        return False, "martingale is disabled"
+    if amount > risk_management.max_trade_amount:
+        return False, f"trade amount {amount} exceeds max_trade_amount"
+    if len(trade_details) >= risk_management.max_open_trades:
+        return False, "maximum open trades reached"
+    if account_details.balance and account_details.balance - amount < risk_management.min_balance_reserve:
+        return False, "minimum balance reserve would be breached"
+    return True, ""
+
+
+def can_start_sequence() -> tuple[bool, str]:
+    exposure = martingale_exposure(
+        risk_management.initial_amount,
+        risk_management.martingale_multiplier if risk_management.martingale_enabled else 1,
+        risk_management.martingale_levels if risk_management.martingale_enabled else 0,
+    )
+    if exposure > risk_management.max_sequence_exposure:
+        return False, f"worst-case sequence exposure {exposure} exceeds max_sequence_exposure"
+    return can_start_trade(risk_management.initial_amount)
+
+
+async def handle_telegram_signal(text: str, source_id: str) -> None:
+    """Route a new Telegram post through the same path as MacroDroid."""
+    provider = os.getenv("TELEGRAM_SIGNAL_PROVIDER", "telegram")
+    timezone = os.getenv("SIGNAL_TIMEZONE", risk_management.local_timezone)
+    enriched_text = text
+    if "signal_provider" not in text.lower():
+        enriched_text += f'\nsignal_provider="{provider}"'
+    if "timezone" not in text.lower():
+        enriched_text += f'\ntimezone="{timezone}"'
+
+    signal = await parse_signal(enriched_text)
+    if signal:
+        logger.info("Accepted Telegram signal %s from %s", signal.signal_id, source_id)
+        await take_trade(signal)
+    else:
+        logger.warning("Rejected Telegram signal from %s", source_id)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    global api,account_details,risk_management
+    global api,account_details,risk_management,telegram_listener,telegram_listener_task,broker_connected
     #connect client
     ssid = os.getenv("ssid")
     if not ssid:
-        logger.critical("SSID not found in .env. Please ensure run scraper usin ./run_scaper.ps1 in in powershell, uv run scraper.py, pyhton scraper.py, or ensure .env is correctly set.")
+        logger.critical("SSID not found in .env; starting in degraded mode with trading disabled.")
+        yield
         return
     
     logger.info("FastAPI lifespan startup event: Initializing Pocket Option client.")
@@ -149,6 +234,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             balance = await api.balance()
             if balance:
                 logger.info("FastAPI lifespan startup event: Connected to Pocket Option client.")
+                broker_connected = True
                 logger.info(f"Startup Balance: {balance}")
                 logger.info(f"\n\n\n== Risk management values == \n - Initial entry amount: ${risk_management.initial_amount}\n - max martingale level: {risk_management.martingale_levels}\n - Martingale multiplier: {risk_management.martingale_multiplier}\n - drawback threshol: {risk_management.drawback_threshold}\n - Timeframe: {risk_management.timeframe}\n\n-----use POST : /set_risk_management to change settings \n\n") #type: ignore
                 account_details = ACCOUNT_DETAILS(balance=balance,P_n_L_day= 0,lifespan=0)
@@ -163,11 +249,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await asyncio.sleep(5)
     except Exception or KeyboardInterrupt as e:
         logger.error(f"Failed to connect to Pocket Option client: {e}", exc_info=True)
+        broker_connected = False
+        yield
         return   
     asyncio.create_task(reset_P_n_L_day()) 
+    telegram_listener = TelegramSignalListener.from_environment(handle_telegram_signal)
+    if telegram_listener:
+        telegram_listener_task = asyncio.create_task(telegram_listener.run())
     yield
     # Disconnect
-    await api.disconnect()
+    if telegram_listener:
+        await telegram_listener.stop()
+    if telegram_listener_task:
+        telegram_listener_task.cancel()
+    if api is not None:
+        await api.disconnect()
+    broker_connected = False
     return
 
 app = FastAPI(lifespan=lifespan)
@@ -179,6 +276,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(QueueMiddleware, max_queue=0)
+
+
+@app.get("/health")
+async def health() -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "status": "ok",
+            "broker_connected": broker_connected,
+            "telegram_listener_enabled": telegram_listener is not None,
+            "telegram_listener_connected": bool(
+                telegram_listener and telegram_listener.client and telegram_listener.client.is_connected()
+            ),
+        },
+    )
 
 # Enable CORS so browser pages served from file:// (origin 'null') or other origins can reach the API.
 # For local development it's fine to allow all origins; tighten this in production.
@@ -297,21 +409,16 @@ async def get_current_signals():
 async def set_risk_management(Risk: RISK_MANAGEMENT):
     global risk_management
     logger.info(f"Received risk management settings: {Risk}")
-    if Risk.initial_amount and Risk.martingale_levels and Risk.martingale_multiplier and Risk.drawback_threshold and Risk.timeframe and Risk.local_timezone:
-        risk_management.initial_amount = Risk.initial_amount
-        risk_management.martingale_levels = Risk.martingale_levels
-        risk_management.martingale_multiplier = Risk.martingale_multiplier
-        risk_management.drawback_threshold = Risk.drawback_threshold
-        risk_management.timeframe = Risk.timeframe
-        risk_management.local_timezone = Risk.local_timezone
-        return JSONResponse(status_code= status.HTTP_200_OK,content={f"message": "Risk managment values successfully set to: {risk_management}"})
-    else:
-        return JSONResponse(status_code= status.HTTP_400_BAD_REQUEST,content={f"message": "Risk managment values not set.Please ensure schema : {initial_amount,martingale_levels,martingale_multiplier,drawback_threshold,timeframe}"})
+    risk_management = Risk
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={"message": "Risk management values updated", "risk_values": risk_management.model_dump()},
+    )
 @app.get("/get_risk_management", response_class=JSONResponse)
 async def get_risk_management():
     global risk_management
     risk_management_values = {}
-    for key, value in risk_management.dict().items():
+    for key, value in risk_management.model_dump().items():
         risk_management_values[key] = value        
     return JSONResponse(status_code= status.HTTP_200_OK,content={"risk_values":risk_management_values})
 
@@ -414,6 +521,11 @@ async def take_trade(signal:SIGNAL):
     try:
         #check entry status of trade_data        
         signal_data = signal.signal_details
+        allowed, reason = can_start_sequence()
+        if not allowed:
+            risk_rejection(reason)
+            Signals.pop(signal.signal_id, None)
+            return
         time_to_wait_seconds = (signal_data.entry_time - current_local_dt- timedelta(milliseconds=0)).total_seconds()
         if time_to_wait_seconds > 0:
             logger.info(f"Waiting {time_to_wait_seconds:.2f} seconds until target entry time: {signal_data.entry_time.strftime('%H:%M:%S')}")
@@ -422,15 +534,16 @@ async def take_trade(signal:SIGNAL):
             logger.info(f"Signal arrived exactly at or slightly past target entry time ({current_local_dt.strftime('%H:%M:%S')} vs {signal_data.entry_time.strftime('%H:%M:%S')}). Placing trade immediately.")        
         try:
             signal_direction = signal_data.direction
+            broker_asset = signal_data.asset if signal_data.asset.lower().endswith("_otc") else f"{signal_data.asset}_otc"
             if signal_direction.upper() == "BUY" or signal_direction.upper() == "CALL": #type: ignore
                 (buy_id, Details) = await api.buy(
-                    asset=signal_data.asset+"_otc", 
+                    asset=broker_asset,
                     amount= risk_management.initial_amount, 
                     time= risk_management.timeframe,
                     check_win=False )
             elif signal_direction.upper() == "SELL" or signal_direction.upper() == "PUT":
                 (buy_id, Details) = await api.sell(
-                    asset=signal_data.asset+"_otc",  
+                    asset=broker_asset,
                     amount= risk_management.initial_amount, 
                     time= risk_management.timeframe, 
                     check_win=False )
@@ -512,6 +625,10 @@ async def manage_martingale(trade:TRADE)-> bool:
     if result.upper() == "LOSS":
         account_details.P_n_L_day = account_details.P_n_L_day - status["amount"]
         account_details.lifespan = account_details.lifespan - status["amount"]
+        if not risk_management.martingale_enabled:
+            logger.info("Martingale is disabled; ending sequence after loss %s", trade.trade_id)
+            trade_details.pop(trade.trade_id, None)
+            return False
         current_trade.level = current_trade.level + 1
         if current_trade.level > risk_management.martingale_levels:
             logger.warning(f"Max martingale levels reached for trade {trade.trade_id}. Ending martingale sequence.")
@@ -535,6 +652,12 @@ async def manage_martingale(trade:TRADE)-> bool:
             return False
         logger.info(f"Trade {trade.trade_id} lost. Initiating martingale sequence. level: {int(current_trade.level)}")#type: ignore
         new_amount = current_trade.amount * risk_management.martingale_multiplier
+        allowed, reason = can_start_trade(new_amount)
+        if not allowed:
+            risk_rejection(reason)
+            logger.warning("Stopping martingale sequence for %s", trade.trade_id)
+            trade_details.pop(trade.trade_id, None)
+            return False
         current_trade.amount = new_amount
         logger.info(f"Placing martingale trade level {current_trade.level} for amount: ${new_amount}")
         try:
