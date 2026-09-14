@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Optional, AsyncIterator, Any
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
@@ -13,6 +14,7 @@ from BinaryOptionsToolsV2.pocketoption import PocketOptionAsync
 from parse_data import parse_macrodroid_trade_data
 from telegram_listener import TelegramSignalListener
 import os
+import secrets
 from pydantic import BaseModel, Field
 
 from rich.logging import RichHandler
@@ -139,6 +141,112 @@ telegram_listener_task: asyncio.Task | None = None
 api: PocketOptionAsync | None = None
 broker_connected = False
 
+# Shared secret guarding POST /trade_signal. Required whenever the endpoint is
+# reachable from the public internet (tunnel, ngrok, or a relay).
+def load_webhook_secrets() -> list[str]:
+    """Return accepted webhook secrets: current, plus an optional previous one.
+
+    Supporting a previous secret allows rotating without a window of rejected
+    signals while the sender (MacroDroid) is updated.
+    """
+    raw = os.getenv("WEBHOOK_SECRET", "")
+    accepted = [candidate.strip() for candidate in raw.split(",") if candidate.strip()]
+    previous = os.getenv("WEBHOOK_SECRET_PREVIOUS", "").strip()
+    if previous and previous not in accepted:
+        accepted.append(previous)
+    return accepted
+
+
+webhook_secrets = load_webhook_secrets()
+webhook_stats: dict[str, Any] = {
+    "last_received_at": None,
+    "last_result": "never",
+    "accepted": 0,
+    "rejected": 0,
+    "unauthorized": 0,
+}
+
+
+def env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None or value == "":
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_file_path() -> Path:
+    """Location of the .env file to update (override with ENV_FILE)."""
+    override = os.getenv("ENV_FILE", "").strip()
+    return Path(override) if override else Path(__file__).with_name(".env")
+
+
+def persist_env_value(key: str, value: str) -> None:
+    """Atomically set ``KEY=value`` in .env, preserving every other line."""
+    path = env_file_path()
+    lines = path.read_text().splitlines(keepends=True) if path.exists() else []
+    replacement = f"{key}={value}\n"
+    for index, line in enumerate(lines):
+        if line.startswith(f"{key}="):
+            lines[index] = replacement
+            break
+    else:
+        lines.append(replacement)
+    temp_path = path.with_name(f"{path.name}.tmp")
+    temp_path.write_text("".join(lines))
+    temp_path.chmod(0o600)
+    temp_path.replace(path)
+
+
+def ensure_webhook_secret() -> None:
+    """Generate and persist a secret once, if enabled and none is configured.
+
+    This deliberately runs only when no secret exists. Rotating on every start
+    would invalidate the value stored in MacroDroid and reject every signal
+    until the phone is updated by hand.
+    """
+    global webhook_secrets
+    if webhook_secrets:
+        return
+    if not env_flag("WEBHOOK_SECRET_AUTOGENERATE", False):
+        logger.warning(
+            "WEBHOOK_SECRET is not set and WEBHOOK_SECRET_AUTOGENERATE is disabled; "
+            "/trade_signal will accept unauthenticated requests."
+        )
+        return
+
+    generated = secrets.token_urlsafe(32)
+    persist_env_value("WEBHOOK_SECRET", generated)
+    os.environ["WEBHOOK_SECRET"] = generated
+    webhook_secrets = [generated]
+    logger.warning(
+        "Generated a new WEBHOOK_SECRET and saved it to .env (mode 0600). "
+        "Copy this exact value into the MacroDroid variable and send it as the "
+        "header x-webhook-secret: %s",
+        generated,
+    )
+
+
+def webhook_auth_ok(request: Request) -> bool:
+    """Validate the shared secret when one is configured.
+
+    Fails closed when a secret is set. When no secret is configured the request
+    is allowed so local development keeps working, but a warning is logged and
+    /health reports webhook_auth_configured=false.
+    """
+    if not webhook_secrets:
+        logger.warning(
+            "WEBHOOK_SECRET is not set; /trade_signal is accepting unauthenticated "
+            "requests. Set WEBHOOK_SECRET in .env before exposing this endpoint."
+        )
+        return True
+
+    provided = request.headers.get("x-webhook-secret", "")
+    if not provided:
+        authorization = request.headers.get("authorization", "")
+        if authorization.lower().startswith("bearer "):
+            provided = authorization[7:].strip()
+    return any(secrets.compare_digest(provided, accepted) for accepted in webhook_secrets)
+
 
 def martingale_exposure(initial_amount: float, multiplier: float, levels: int) -> float:
     """Return the maximum amount risked across the initial trade and recoveries."""
@@ -192,6 +300,7 @@ async def handle_telegram_signal(text: str, source_id: str) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global api,account_details,risk_management,telegram_listener,telegram_listener_task,broker_connected
+    ensure_webhook_secret()
     #connect client
     ssid = os.getenv("ssid")
     if not ssid:
@@ -200,32 +309,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         return
     
     logger.info("FastAPI lifespan startup event: Initializing Pocket Option client.")
-    # risk_management:object|None = None
-    #App startup values
-    set_risk_management = input("Do you want to set risk managment values? (y/n): ").strip().lower()
-    if set_risk_management == "y" or set_risk_management == "yes":
-        for _ in range(3):
-            intial_amount = input("Enter initial amount: ").strip()
-            martingale_levels = input("Enter martingale levels: ").strip()
-            martingale_multiplier = input("Enter martingale multiplier: ").strip()
-            timeframe = input("Enter timeframe: ").strip()
-            drawback_threshold = input("Enter drawback threshold: ").strip()
-            if intial_amount and martingale_levels and martingale_multiplier and timeframe and drawback_threshold:
-                risk_management = RISK_MANAGEMENT(
-                    initial_amount = float(intial_amount),
-                    martingale_levels=int(martingale_levels),
-                    martingale_multiplier=int(martingale_multiplier),
-                    drawback_threshold=int(drawback_threshold),
-                    timeframe= int(timeframe)
-                    )
-                break
-            else:
-                logger.warning("Please enter all the required details.")
-                if _ >= 3:
-                    logger.info("not all values have been set for the app, will use default values for missing values..")
-                    risk_management = RISK_MANAGEMENT()
-            await asyncio.sleep(5)
-    
+    # Risk settings come from the environment (see load_risk_management) or from
+    # POST /set_risk_management. Startup must never block on stdin, otherwise a
+    # service manager restart would hang forever.
+    logger.info(
+        "Active risk configuration: %s",
+        risk_management.model_dump(),
+    )
+    if not risk_management.martingale_enabled:
+        logger.warning("Martingale recovery is disabled; losing trades will not be recovered.")
+
     try:
         api = PocketOptionAsync(ssid) #type: ignore
         await asyncio.sleep(5)
@@ -302,6 +395,8 @@ async def health() -> JSONResponse:
             "telegram_listener_connected": bool(
                 telegram_listener and telegram_listener.client and telegram_listener.client.is_connected()
             ),
+            "webhook_auth_configured": bool(webhook_secrets),
+            "webhook": webhook_stats,
         },
     )
 
@@ -438,21 +533,53 @@ async def get_risk_management():
 @app.post("/trade_signal")
 async def trade_signal_webhook(request: Request)->JSONResponse:
     global api,risk_management,account_details
-    account_details.balance = await api.balance()
+    webhook_stats["last_received_at"] = datetime.now(
+        pytz.timezone(str(risk_management.local_timezone))
+    ).strftime("%Y-%m-%d %H:%M:%S")
+
+    if not webhook_auth_ok(request):
+        webhook_stats["unauthorized"] += 1
+        webhook_stats["last_result"] = "unauthorized"
+        client_host = request.client.host if request.client else "unknown"
+        logger.warning("Rejected /trade_signal request with invalid credentials from %s", client_host)
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"message": "Unauthorized: missing or invalid webhook secret."},
+        )
+
     raw_data = (await request.body()).decode('utf-8')
     logger.info(f"\n\nReceived raw data from notification: {raw_data}\n\n")
+
+    if api is None:
+        webhook_stats["rejected"] += 1
+        webhook_stats["last_result"] = "broker_unavailable"
+        logger.error("Rejecting signal: broker client is not connected.")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"message": "Broker client is not connected; signal not processed."},
+        )
+
+    account_details.balance = await api.balance()
     if account_details.P_n_L_day <= risk_management.drawback_threshold:
+        webhook_stats["rejected"] += 1
+        webhook_stats["last_result"] = "drawdown_halt"
         logger.warning("P_n_L_day is below the threshold. Trade signal processing halted.")
         return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Trade signal processing halted due to P_n_L_day threshold."})
     try:
         trade_data = await parse_signal(text=raw_data)
         if not trade_data:
             #type: ignore
+            webhook_stats["rejected"] += 1
+            webhook_stats["last_result"] = "invalid_signal"
             return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Invalid trade signal data."})
         asyncio.create_task(take_trade(trade_data))#type: ignore
     except (Exception,KeyboardInterrupt) as e:
+        webhook_stats["rejected"] += 1
+        webhook_stats["last_result"] = "error"
         logger.error(f"Error taking trade: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error taking trade: {e}")
+    webhook_stats["accepted"] += 1
+    webhook_stats["last_result"] = "accepted"
     return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Trade signal received and processed successfully."})
     
 # Helper functions

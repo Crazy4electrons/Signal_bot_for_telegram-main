@@ -1,12 +1,17 @@
 # test.py
+import os
+
 import requests
 import json
 import time
 from datetime import datetime, timedelta
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 # --- Configuration ---
-# IMPORTANT: Replace this with your actual Ngrok HTTPS URL
-# ngrok_url = None
+# Optional: override the port the app listens on.
 # --- End Configuration ---
 
 # Base notification template
@@ -105,12 +110,18 @@ def send_test_signal(asset_pair:str,direction_text:str,signal_provider:str,port:
     print(notification_content)
     print("------------------------------------")
     WEBHOOK_URL = f"http://localhost:{port}/trade_signal"
+    headers = {'Content-Type': 'text/plain'}
+    secret = os.getenv("WEBHOOK_SECRET", "").strip()
+    if secret:
+        headers['x-webhook-secret'] = secret
     try:
         print(f"Sending POST request to: {WEBHOOK_URL}")
-        response = requests.post(WEBHOOK_URL, data=notification_content, headers={'Content-Type': 'text/plain'})
+        response = requests.post(WEBHOOK_URL, data=notification_content, headers=headers)
 
         print("\n--- Webhook Response ---")
         print(f"Status Code: {response.status_code}")
+        if response.status_code == 401:
+            print("401 Unauthorized: WEBHOOK_SECRET does not match the server value.")
         try:
             print(f"Response Body: {json.dumps(response.json(), indent=2)}")
         except json.JSONDecodeError:
@@ -118,18 +129,18 @@ def send_test_signal(asset_pair:str,direction_text:str,signal_provider:str,port:
         print("------------------------")
 
     except requests.exceptions.ConnectionError as e:
-        print(f"\nERROR: Could not connect to the webhook URL. Is Ngrok running and URL correct?")
+        print("\nERROR: Could not connect to the webhook URL. Is the app running?")
         print(f"Details: {e}")
     except Exception as e:
         print(f"\nAn unexpected error occurred: {e}")
 
 if __name__ == "__main__":
     print("Welcome to the Signal Test Sender!")
-    print("Make sure your `trader.py` and Ngrok are running.")
+    print("Make sure the app is running (uvicorn main:app).")
     asset_pair = input("Enter Asset Pair (e.g., EUR/USD): ").strip().upper()
     direction_text = input("Enter Direction (BUY or SELL): ").strip().upper()
     signal_provider = input("Enter Signal Provider: ").strip()
-    port = input("Enter Port (default 3000): ").strip() or "3000"
+    port = input("Enter Port (default 9634): ").strip() or "9634"
     timezone = input("Enter Timezone (default Etc/GMT-2): ").strip() or "Etc/GMT-2"
     print(f"Signals will be sent to: http://localhost:{port}/trade_signal")
     send_test_signal(asset_pair=asset_pair,direction_text=direction_text,signal_provider=signal_provider,port=port,timezone=timezone)

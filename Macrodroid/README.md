@@ -49,11 +49,41 @@ After importing, you **must** update the following global variables before runni
 
 1. In MacroDroid, press the **Variables** button.
 2. Update these variables:
-   - **`ngrok_url`** : set to your Ngrok public forwarding URL (e.g., `https://<your-id>.ngrok.io`)
+   - **`tunnel_url`** : the stable public URL of your webhook, including the path (for example `https://<your-assigned-name>.ngrok-free.app/trade_signal`). It must stay the same across restarts, so use a tunnel that provides a stable URL.
+   - **`webhook_secret`** : the same value you set as `WEBHOOK_SECRET` in the server `.env`. The HTTP request action must send it as a header named `x-webhook-secret`, otherwise the server returns `401`.
    - **`signal_provider`** : (optional) your signal provider name
    - **`timezone`** : must be in pytz format (e.g., `Etc/GMT-2` for GMT+2)
 
 3. Save and close.
+
+Note the timezone sign convention: pytz uses the inverted offset. `Etc/GMT-2` is **GMT+2**, and
+`Etc/GMT+4` is GMT-4. Getting this wrong shifts every entry time.
+
+If your tunnel is ngrok's free tier, you can also add the header `ngrok-skip-browser-warning` with any value. Programmatic API requests are not affected by the browser interstitial, but the header removes any doubt.
+
+## Configuring the HTTP Request Action
+
+The macro that forwards a notification must send an HTTP request configured as follows:
+
+| Setting | Value |
+| --- | --- |
+| Method | `POST` |
+| URL | the `tunnel_url` variable, ending in `/trade_signal` |
+| Body / content type | raw text (`text/plain`) containing the notification text |
+| Header | `x-webhook-secret` = the `webhook_secret` variable |
+
+Requirements:
+
+- The server must be running and reachable at `tunnel_url`. See
+  [Running as a service](../README.md#running-as-a-service-survives-restarts) in the main README so
+  the app and the tunnel restart automatically after a reboot.
+- Use a tunnel that provides a **stable** URL. A tunnel that assigns a new random URL on each start
+  (for example `localtunnel`) forces you to re-edit `tunnel_url` after every restart.
+- ngrok agent **v3** is required for stable free dev domains. The discontinued v2 agent cannot
+  provide one.
+
+The server accepts a signal only if it contains an asset, a direction, an entry time, a provider,
+and a timezone. Provider and timezone fall back to the server configuration when omitted.
 
 ## Custom Widgets
 
@@ -66,6 +96,11 @@ Once imported, you can add the following custom widgets to your Android home scr
 
 - **File not found**: Make sure `MacroDroid.mdr` is in a location accessible by MacroDroid (typically Downloads, Documents, or a custom folder).
 - **Import fails**: Try re-downloading the file or clearing MacroDroid cache and trying again.
-- **Macros don't run**: Ensure all global variables are set correctly, especially `ngrok_url` and `timezone`.
+- **Macros don't run**: Ensure all global variables are set correctly, especially `tunnel_url` and `timezone`.
+- **HTTP 401 from the server**: `webhook_secret` in MacroDroid does not match `WEBHOOK_SECRET` in the server `.env`, or the header is not named `x-webhook-secret`. Check `GET /health` - it reports `webhook_auth_configured` and an `unauthorized` counter.
+- **HTTP 503 from the server**: the app is running but the broker is not connected. Check `broker_connected` in `GET /health` and re-capture the Pocket Option session.
+- **HTTP 403 from the server**: the daily loss limit was breached, so processing is halted by design.
+- **Signals accepted but no trade placed**: the signal arrived after its entry time. Check the timezone convention above.
+- **Signals stop arriving after a tunnel restart**: the tunnel URL changed. Use a tunnel with a stable URL and update `tunnel_url` once; check `last_received_at` in `GET /health`.
 
 For more help, refer to the main project `README.md` in the parent directory.

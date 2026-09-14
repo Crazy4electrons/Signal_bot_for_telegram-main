@@ -1,18 +1,14 @@
+# Optional pip/pip-tools fallback. The supported workflow is `uv sync`,
+# which uses pyproject.toml + uv.lock for reproducible installs.
+# Keep this file in sync if you rely on pip.
 aiohappyeyeballs
 aiohttp
 fastapi
-loguru
-pocketoptionapi-async
 python-dotenv
+telethon>=1.36,<2
 pytz
 requests
-selenium
 uvicorn
-webdriver-manager
-websockets
-python-telegram-bot
-telethon>=1.36,<2
-pychrome==0.2.4
-playwright==1.62.0
-binaryoptionstoolsv2==0.2.15
 rich>=14.2.0
+playwright>=1.62.0
+binaryoptionstoolsv2==0.2.15

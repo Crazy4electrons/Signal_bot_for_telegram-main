@@ -15,5 +15,4 @@ logs
 *.log
 data/
 *.session
-uv.lock
 BinaryOptionsTools-v2
