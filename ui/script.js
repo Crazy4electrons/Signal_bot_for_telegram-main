@@ -8,6 +8,19 @@ let openTradesElements = document.getElementById('open-trades-result');
 let currentSignalsElements = document.getElementById('current-signals-result');
 let closedTradesElements = document.getElementById('closed-trades-result');
 
+// Signals are normalised to CALL/PUT, while the broker UI uses BUY/SELL.
+function formatDirection(value) {
+    if (value === undefined || value === null || value === '' || value === '—') return '—';
+    const direction = String(value).trim().toUpperCase();
+    if (direction === 'BUY' || direction === 'CALL') {
+        return `<span style="color:green;">${direction}</span>`;
+    }
+    if (direction === 'SELL' || direction === 'PUT') {
+        return `<span style="color:red;">${direction}</span>`;
+    }
+    return direction;
+}
+
 async function updateBalance() {
     try {
         let response = await fetch('/account_details');
@@ -50,17 +63,18 @@ async function updateOpenTrades() {
             const profit = (t.profit !== undefined && t.profit !== null) ? t.profit : '—';
             // console.log(`Trade details - Open Price: ${openPrice}, Amount: ${amount}, Profit: ${profit}`);
             // compute points safely using the lastClose value
-            lastClose = t.current_price !== undefined ? Number(t.current_price) : (t.currentPrice !== undefined ? Number(t.currentPrice) : NaN);
+            const lastClose = t.current_price !== undefined ? Number(t.current_price) : (t.currentPrice !== undefined ? Number(t.currentPrice) : NaN);
+            const tradeDirection = String(t.direction ?? '').trim().toUpperCase();
             let pointsHtml = '—';
-            console.log(`Calculating points for trade. Last Close: ${lastClose}, Open Price: ${openPrice}, Direction: ${t.direction}`);
+            console.log(`Calculating points for trade. Last Close: ${lastClose}, Open Price: ${openPrice}, Direction: ${tradeDirection}`);
             if (!isNaN(lastClose) && !isNaN(openPrice)) {
                 // lastClose = lastClose;
                 // openPrice = openPrice;
-                if (t.direction.toUpperCase() === "BUY") {
+                if (tradeDirection === "BUY" || tradeDirection === "CALL") {
                     const diff = lastClose - openPrice;
                     const formatted =Math.abs(Math.round(diff*100000)); // optional formatting
                     pointsHtml = diff >= 0 ? `<span style="color:green;">${formatted}</span>` : `<span style="color:red;">${formatted}</span>`;
-                } else if (t.direction.toUpperCase() === "SELL") {
+                } else if (tradeDirection === "SELL" || tradeDirection === "PUT") {
                     const diff = openPrice-lastClose ;
                     const formatted = Math.abs(Math.round(diff*100000)); // optional formatting
                     pointsHtml = diff >= 0 ? `<span style="color:green;">${formatted}</span>` : `<span style="color:red;">${formatted}</span>`;
@@ -76,7 +90,7 @@ async function updateOpenTrades() {
             console.log('Processed trade:', t);
             return `
                 <tr>
-                    <td>${t.direction ?? ''}</td>
+                    <td>${formatDirection(t.direction)}</td>
                     <td>${t.asset ?? '—'}</td>
                     <td>${amount}</td>
                     <td>${isNaN(openPrice) ? '—' : openPrice}</td>
@@ -112,14 +126,7 @@ async function updateCurrentSignals() {
             const signal_provider = (signal.signal_provider !== undefined && signal.signal_provider !== null) ? signal.signal_provider : '—';
             const asset = (signal.asset !== undefined && signal.asset !== null) ? signal.asset : '—';
             const entry_time = (signal.entry_time !== undefined && signal.entry_time !== null) ? signal.entry_time : '—';
-            let direction = '—';
-            if (signal.direction !== undefined && signal.direction !== null) {
-                if (signal.direction.toUpperCase() === 'BUY') {
-                    direction = '<span style="color:green;">BUY</span>';
-                } else if (signal.direction.toUpperCase() === 'SELL') {
-                    direction = '<span style="color:red;">SELL</span>';
-                }
-            }
+            const direction = formatDirection(signal.direction);
             return `
                 <tr>
                     <td>${signal_provider}</td>
@@ -157,35 +164,29 @@ async function updateClosedTrades() {
         html += Object.keys(trades).map(key => {
 
             const t = trades[key];
-            let direction = '—';
-            if (t.trade_details.direction !== undefined && t.trade_details.direction !== null) {
-                if (t.trade_details.direction.toUpperCase() === 'BUY') {
-                    direction = '<span style="color:green;">BUY</span>';
-                } else if (t.trade_details.direction.toUpperCase() === 'SELL') {
-                    direction = '<span style="color:red;">SELL</span>';
-                }
-            }
+            const details = t.trade_details || {};
+            const direction = formatDirection(details.direction);
             let Outcome = '—';
-            if (t.trade_details.result !== undefined && t.trade_details.result !== null) {
-                if (t.trade_details.result.toUpperCase() === 'WON') {
+            if (details.result !== undefined && details.result !== null) {
+                if (String(details.result).toUpperCase() === 'WON') {
                     Outcome = '<span style="color:green;">WON</span>';
-                } else if (t.trade_details.result.toUpperCase() === 'LOSS') {
+                } else if (String(details.result).toUpperCase() === 'LOSS') {
                     Outcome = '<span style="color:red;">LOSS</span>';
-                }else{
-                    Outcome = t.trade_details.result;
+                } else {
+                    Outcome = details.result;
                 }
             }
             // console.log(t.trade_details);
             return `
                 <tr>
-                <td>${t.trade_details.signal_provider ?? '—'}</td>
+                <td>${details.signal_provider ?? '—'}</td>
                 <td>${Outcome}</td>
-                    <td>${t.trade_details.asset ?? '—'}</td>
+                    <td>${details.asset ?? '—'}</td>
                     <td>${direction}</td>
-                    <td>${t.trade_details.entry_time ?? '—'}</td>
-                    <td>${t.trade_details.amount ?? '—'}</td>
-                    <td>${t.trade_details.level ?? '—'}</td>
-                    <td>${t.trade_details.entry_time ?? '—'}</td>
+                    <td>${details.entry_time ?? '—'}</td>
+                    <td>${details.amount ?? '—'}</td>
+                    <td>${details.level ?? '—'}</td>
+                    <td>${details.entry_time ?? '—'}</td>
                 </tr>
             `;
 

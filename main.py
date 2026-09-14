@@ -278,6 +278,19 @@ app.add_middleware(
 app.add_middleware(QueueMiddleware, max_queue=0)
 
 
+class NoCacheUiMiddleware(BaseHTTPMiddleware):
+    """Keep dashboard assets fresh so UI fixes appear without a hard reload."""
+
+    async def dispatch(self, request: Request, call_next: Callable):
+        response = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith("/ui"):
+            response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
+
+
+app.add_middleware(NoCacheUiMiddleware)
+
+
 @app.get("/health")
 async def health() -> JSONResponse:
     return JSONResponse(
