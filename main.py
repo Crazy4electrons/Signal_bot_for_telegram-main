@@ -253,6 +253,24 @@ def martingale_exposure(initial_amount: float, multiplier: float, levels: int) -
     return sum(initial_amount * multiplier**level for level in range(levels + 1))
 
 
+def to_float(value: Any, default: float = 0.0) -> float:
+    """Coerce a broker response field to float.
+
+    Pocket Option returns numeric fields such as ``profit``, ``amount`` and
+    ``balance`` as strings (for example ``'0.92'``), so arithmetic must never
+    assume they are already numeric.
+    """
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        logger.warning("Could not convert broker value %r to float; using %s", value, default)
+        return default
+
+
 def risk_rejection(reason: str) -> None:
     logger.warning("Trade rejected by risk controls: %s", reason)
 
@@ -433,11 +451,11 @@ async def get_account_details():
     global api,account_details
     balance = None
     try:
-        balance = await api.balance()
+        balance = to_float(await api.balance())
         if balance <= 0:
             for retries in range(10):
                 await api.reconnect()
-                balance =await api.balance()
+                balance = to_float(await api.balance())
                 if balance > 0:
                     break
                 if retries == 9:
@@ -559,7 +577,7 @@ async def trade_signal_webhook(request: Request)->JSONResponse:
             content={"message": "Broker client is not connected; signal not processed."},
         )
 
-    account_details.balance = await api.balance()
+    account_details.balance = to_float(await api.balance())
     if account_details.P_n_L_day <= risk_management.drawback_threshold:
         webhook_stats["rejected"] += 1
         webhook_stats["last_result"] = "drawdown_halt"
@@ -687,11 +705,14 @@ async def take_trade(signal:SIGNAL):
                     amount= risk_management.initial_amount, 
                     time= risk_management.timeframe, 
                     check_win=False )
+            else:
+                raise ValueError(f"Unsupported trade direction: {signal_direction!r}")
         except (Exception,KeyboardInterrupt) as e:
-            logger.error(f"Error placing trade for {signal_data.asset+"_otc", } {signal_data.direction}: {e}", exc_info=True)
-            Signals.pop(signal.signal_id)
-            del signal_data
-            del signal
+            logger.error(
+                "Error placing %s trade for %s at %s: %s",
+                signal_data.direction, broker_asset, signal_data.entry_time, e, exc_info=True,
+            )
+            Signals.pop(signal.signal_id, None)
             return
         
         logger.info(f"\n\n======Trade placed successfully.=======\n -Trade ID: {buy_id}\n-Details: {Details}\n\n")
@@ -703,7 +724,7 @@ async def take_trade(signal:SIGNAL):
         "entry_time": datetime.strptime(Details["openTime"], "%Y-%m-%d %H:%M:%S"),
         "level":0,
         "open_price":Details["openPrice"],
-        "amount":float(Details["amount"])
+        "amount":to_float(Details.get("amount"))
             }
         }
         
@@ -725,11 +746,8 @@ async def take_trade(signal:SIGNAL):
             del signal
             
     except(Exception,KeyboardInterrupt) as e:
-            logger.error(f"Error placing trade for {signal_data.asset+"_otc", } {signal_data.direction}: {e}", exc_info=True)
-            Signals.pop(signal.signal_id)
-            del trade
-            del signal_data
-            del signal
+            logger.error("Trade sequence failed for %s: %s", signal.signal_id, e, exc_info=True)
+            Signals.pop(signal.signal_id, None)
             return
 
     
@@ -763,8 +781,9 @@ async def manage_martingale(trade:TRADE)-> bool:
         return False
     logger.info(status)
     if result.upper() == "LOSS":
-        account_details.P_n_L_day = account_details.P_n_L_day - status["amount"]
-        account_details.lifespan = account_details.lifespan - status["amount"]
+        loss_amount = to_float(status.get("amount"))
+        account_details.P_n_L_day -= loss_amount
+        account_details.lifespan -= loss_amount
         if not risk_management.martingale_enabled:
             logger.info("Martingale is disabled; ending sequence after loss %s", trade.trade_id)
             trade_details.pop(trade.trade_id, None)
@@ -859,7 +878,7 @@ async def manage_martingale(trade:TRADE)-> bool:
         "level":current_trade.level,
         "open_price":Details["openPrice"],
         "entry_id":buy_id,
-        "amount":float(Details["amount"])
+        "amount":to_float(Details.get("amount"))
             }
         }
         trade_details.pop(trade.trade_id)
@@ -868,8 +887,9 @@ async def manage_martingale(trade:TRADE)-> bool:
         status_results = await manage_martingale(trade=trade)
         return status_results
     else:
+        profit = to_float(status.get("profit"))
         logger.info(f"Trade {trade.trade_id} won or tied. Martingale sequence completed.")
-        print(f"==trade result==\n -Asset:{current_trade.asset}\n -lastest amount: {current_trade.amount}\n -martingale level: {current_trade.level}\n -profit/loss: {status["profit"]}\n")
+        print(f"==trade result==\n -Asset:{current_trade.asset}\n -lastest amount: {current_trade.amount}\n -martingale level: {current_trade.level}\n -profit/loss: {profit}\n")
         await asyncio.sleep(random() * 10) 
         server_details = await api.closed_deals()
         closed_trades[trade.trade_id] = {
@@ -887,8 +907,8 @@ async def manage_martingale(trade:TRADE)-> bool:
         trade_details.pop(trade.trade_id)
         del current_trade
         del trade
-        account_details.P_n_L_day = account_details.P_n_L_day + status["profit"]
-        account_details.lifespan = account_details.lifespan + status["profit"]
+        account_details.P_n_L_day += profit
+        account_details.lifespan += profit
         return True
     
 async def reset_P_n_L_day():
