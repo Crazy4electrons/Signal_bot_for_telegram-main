@@ -16,3 +16,6 @@ logs
 data/
 *.session
 BinaryOptionsTools-v2
+graphify-out/cache/
+
+graphify-out/cache/stat-index.json
