@@ -1,0 +1,59 @@
+# .graphifyignore — what graphify may put in the corpus.
+#
+# Syntax: gitignore spec.
+#   - last matching rule wins, so order matters
+#   - `dir/`  matches directories only
+#   - `/lead` anchors the pattern to this directory
+#   - `!pat`  re-includes something ignored earlier
+#   - `\#`    escapes a literal #
+#
+# graphify merges this file AFTER .gitignore for the same directory, so these
+# rules override .gitignore on conflict and can also re-include a .gitignore'd
+# path with `!`. Run `graphify . --no-gitignore` to make this file the only
+# source of ignore rules.
+#
+# Do NOT create .graphifyinclude — graphify dropped support for it; use `!`
+# patterns here instead.
+
+# ---- graphify's own output ------------------------------------------------
+# Already auto-excluded, but listed so `--no-gitignore` runs stay clean.
+graphify-out/
+
+# ---- graphify config ------------------------------------------------------
+# .json files count as CODE, so a project-local providers.json (which decides
+# where this repo's corpus and API key get sent) would otherwise enter the graph.
+.graphify/
+
+# ---- not source: env, caches, toolchain -----------------------------------
+.venv/
+venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.vscode/
+.conda/
+.DS_Store
+uv.lock
+
+# ---- runtime data ---------------------------------------------------------
+# data/ is a full Chromium/Playwright profile: tens of thousands of binary
+# cache, history and cookie files with nothing graphable in them.
+data/
+shared_data/
+browser_profiles/
+BinaryOptionsTools-v2/
+*.session
+
+# ---- binary MacroDroid macro ----------------------------------------------
+# Ignored by extension so Macrodroid/README.md stays in the corpus.
+Macrodroid/*.mdr
+
+# ---- secrets: never send env contents to an LLM ---------------------------
+.env
+.env.*
+
+# ---- logs and scratch -----------------------------------------------------
+logs/
+*.log
+ssid.txt
+telegram_bot.py

@@ -16,6 +16,8 @@ from telegram_listener import TelegramSignalListener
 import os
 import secrets
 from pydantic import BaseModel, Field
+from starlette.requests import ClientDisconnect
+from starlette.responses import Response
 
 from rich.logging import RichHandler
 import logging
@@ -38,7 +40,10 @@ class RISK_MANAGEMENT(BaseModel):
     martingale_enabled: bool = True
     max_trade_amount: float = Field(default=16, gt=0)
     max_sequence_exposure: float = Field(default=31, gt=0)
-    max_open_trades: int = Field(default=1, ge=1)
+    max_open_trades: int = Field(default=5, ge=1)
+    max_open_trades_per_asset: int = Field(default=1, ge=0)
+    max_open_trades_per_provider: int = Field(default=0, ge=0)
+    stale_sequence_seconds: int = Field(default=0, ge=0)
     min_balance_reserve: float = Field(default=0, ge=0)
 
 class ACCOUNT_DETAILS(BaseModel):
@@ -123,6 +128,9 @@ def load_risk_management() -> RISK_MANAGEMENT:
         "max_trade_amount": float,
         "max_sequence_exposure": float,
         "max_open_trades": int,
+        "max_open_trades_per_asset": int,
+        "max_open_trades_per_provider": int,
+        "stale_sequence_seconds": int,
         "min_balance_reserve": float,
     }
     for name, converter in environment_types.items():
@@ -275,19 +283,96 @@ def risk_rejection(reason: str) -> None:
     logger.warning("Trade rejected by risk controls: %s", reason)
 
 
-def can_start_trade(amount: float) -> tuple[bool, str]:
+def active_sequences(exclude_trade_id: str | None = None) -> list[TRADE_FIELDS]:
+    """Currently open sequences, excluding one trade id when needed.
+
+    A recovery leg must exclude its own parent, otherwise the parent would count
+    against the per-asset limit and block its own martingale step.
+    """
+    return [
+        details
+        for trade_id, details in list(trade_details.items())
+        if trade_id != exclude_trade_id
+    ]
+
+
+def sequence_max_age_seconds() -> int:
+    """Age after which a sequence is assumed dead and its slot reclaimed."""
+    if risk_management.stale_sequence_seconds > 0:
+        return risk_management.stale_sequence_seconds
+    legs = risk_management.martingale_levels + 1 if risk_management.martingale_enabled else 1
+    # Every leg can run for one timeframe, with slack for settlement lookups.
+    return risk_management.timeframe * legs * 2 + 120
+
+
+def purge_stale_sequences() -> int:
+    """Drop sequences that outlived their expected duration.
+
+    Without this, a result lookup that never returns would hold a slot against
+    the open-trade limits indefinitely and silently block every later signal.
+    """
+    local_tz = pytz.timezone(str(risk_management.local_timezone))
+    now = datetime.now(local_tz)
+    max_age = sequence_max_age_seconds()
+    removed = 0
+    for trade_id, details in list(trade_details.items()):
+        entry_time = details.entry_time
+        if entry_time.tzinfo is None:
+            entry_time = local_tz.localize(entry_time)
+        age = (now - entry_time).total_seconds()
+        if age > max_age:
+            logger.warning(
+                "Reclaiming stale sequence %s (%s %s %s): age %.0fs exceeds %ss",
+                trade_id, details.signal_provider, details.asset, details.direction, age, max_age,
+            )
+            trade_details.pop(trade_id, None)
+            removed += 1
+    return removed
+
+
+def can_start_trade(
+    amount: float,
+    provider: str | None = None,
+    asset: str | None = None,
+    exclude_trade_id: str | None = None,
+) -> tuple[bool, str]:
     if not risk_management.martingale_enabled and amount != risk_management.initial_amount:
         return False, "martingale is disabled"
     if amount > risk_management.max_trade_amount:
         return False, f"trade amount {amount} exceeds max_trade_amount"
-    if len(trade_details) >= risk_management.max_open_trades:
-        return False, "maximum open trades reached"
+
+    open_sequences = active_sequences(exclude_trade_id)
+    if len(open_sequences) >= risk_management.max_open_trades:
+        summary = ", ".join(
+            f"{d.signal_provider}/{d.asset}/{d.direction}" for d in open_sequences
+        )
+        return False, (
+            f"maximum open trades reached ({len(open_sequences)}/{risk_management.max_open_trades}): {summary}"
+        )
+
+    if asset and risk_management.max_open_trades_per_asset:
+        same_asset = [d for d in open_sequences if d.asset == asset]
+        if len(same_asset) >= risk_management.max_open_trades_per_asset:
+            return False, (
+                f"already {len(same_asset)} open trade(s) on {asset} "
+                f"(max_open_trades_per_asset={risk_management.max_open_trades_per_asset})"
+            )
+
+    if provider and risk_management.max_open_trades_per_provider:
+        same_provider = [d for d in open_sequences if d.signal_provider == provider]
+        if len(same_provider) >= risk_management.max_open_trades_per_provider:
+            return False, (
+                f"already {len(same_provider)} open trade(s) from provider {provider} "
+                f"(max_open_trades_per_provider={risk_management.max_open_trades_per_provider})"
+            )
+
     if account_details.balance and account_details.balance - amount < risk_management.min_balance_reserve:
         return False, "minimum balance reserve would be breached"
     return True, ""
 
 
-def can_start_sequence() -> tuple[bool, str]:
+def can_start_sequence(provider: str | None = None, asset: str | None = None) -> tuple[bool, str]:
+    purge_stale_sequences()
     exposure = martingale_exposure(
         risk_management.initial_amount,
         risk_management.martingale_multiplier if risk_management.martingale_enabled else 1,
@@ -295,7 +380,7 @@ def can_start_sequence() -> tuple[bool, str]:
     )
     if exposure > risk_management.max_sequence_exposure:
         return False, f"worst-case sequence exposure {exposure} exceeds max_sequence_exposure"
-    return can_start_trade(risk_management.initial_amount)
+    return can_start_trade(risk_management.initial_amount, provider, asset)
 
 
 async def handle_telegram_signal(text: str, source_id: str) -> None:
@@ -549,11 +634,17 @@ async def get_risk_management():
     return JSONResponse(status_code= status.HTTP_200_OK,content={"risk_values":risk_management_values})
 
 @app.post("/trade_signal")
-async def trade_signal_webhook(request: Request)->JSONResponse:
-    global api,risk_management,account_details
-    webhook_stats["last_received_at"] = datetime.now(
-        pytz.timezone(str(risk_management.local_timezone))
-    ).strftime("%Y-%m-%d %H:%M:%S")
+async def trade_signal_webhook(request: Request):
+    # Defensive read: MacroDroid can abort the POST before the body is
+    # fully transferred, which makes request.body() raise ClientDisconnect.
+    try:
+        raw_body = await request.body()
+    except ClientDisconnect:
+        logger.warning("Client disconnected before signal body was received.")
+        return Response(status_code=499)
+
+    raw_data = raw_body.decode("utf-8", errors="replace")
+    logger.info(f"Received raw data from notification: {raw_data}")
 
     if not webhook_auth_ok(request):
         webhook_stats["unauthorized"] += 1
@@ -564,9 +655,6 @@ async def trade_signal_webhook(request: Request)->JSONResponse:
             status_code=status.HTTP_401_UNAUTHORIZED,
             content={"message": "Unauthorized: missing or invalid webhook secret."},
         )
-
-    raw_data = (await request.body()).decode('utf-8')
-    logger.info(f"\n\nReceived raw data from notification: {raw_data}\n\n")
 
     if api is None:
         webhook_stats["rejected"] += 1
@@ -676,10 +764,11 @@ async def take_trade(signal:SIGNAL):
     global risk_management,api,trade_details,Signals
         # Place the initial trade
     current_local_dt = datetime.now(pytz.timezone(str(risk_management.local_timezone)))
+    active_trade_id: str | None = None
     try:
         #check entry status of trade_data        
         signal_data = signal.signal_details
-        allowed, reason = can_start_sequence()
+        allowed, reason = can_start_sequence(signal_data.signal_provider, signal_data.asset)
         if not allowed:
             risk_rejection(reason)
             Signals.pop(signal.signal_id, None)
@@ -729,6 +818,7 @@ async def take_trade(signal:SIGNAL):
         }
         
         trade = TRADE(**data)
+        active_trade_id = trade.trade_id
         await asyncio.sleep(random() * 10) 
         logger.info(f"trade details: {trade.trade_details}")
         trade_details[trade.trade_id] = trade.trade_details
@@ -748,6 +838,8 @@ async def take_trade(signal:SIGNAL):
     except(Exception,KeyboardInterrupt) as e:
             logger.error("Trade sequence failed for %s: %s", signal.signal_id, e, exc_info=True)
             Signals.pop(signal.signal_id, None)
+            if active_trade_id:
+                trade_details.pop(active_trade_id, None)
             return
 
     
@@ -811,7 +903,12 @@ async def manage_martingale(trade:TRADE)-> bool:
             return False
         logger.info(f"Trade {trade.trade_id} lost. Initiating martingale sequence. level: {int(current_trade.level)}")#type: ignore
         new_amount = current_trade.amount * risk_management.martingale_multiplier
-        allowed, reason = can_start_trade(new_amount)
+        allowed, reason = can_start_trade(
+            new_amount,
+            current_trade.signal_provider,
+            current_trade.asset,
+            exclude_trade_id=trade.trade_id,
+        )
         if not allowed:
             risk_rejection(reason)
             logger.warning("Stopping martingale sequence for %s", trade.trade_id)
@@ -920,6 +1017,6 @@ async def reset_P_n_L_day():
         wait_seconds = (next_reset - now).total_seconds()
         await asyncio.sleep(wait_seconds)
         account_details.P_n_L_day = 0
-        
-        
-        
+
+
+

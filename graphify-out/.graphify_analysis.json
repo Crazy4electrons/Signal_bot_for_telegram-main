@@ -1,0 +1,239 @@
+{
+  "communities": {
+    "0": [
+      "get",
+      "jsonresponse",
+      "main",
+      "main_get_account_details",
+      "main_get_closed_trades",
+      "main_get_current_signals",
+      "main_get_open_trades",
+      "main_get_risk_management",
+      "main_health",
+      "main_load_risk_management",
+      "main_load_webhook_secrets",
+      "main_rationale_155",
+      "main_risk_management",
+      "main_root_index",
+      "main_set_risk_management",
+      "main_ui_script",
+      "main_ui_styles"
+    ],
+    "1": [
+      "fastapi",
+      "main_lifespan",
+      "main_reset_p_n_l_day",
+      "signalcallback",
+      "telegram_listener",
+      "telegram_listener_rationale_1",
+      "telegram_listener_rationale_29",
+      "telegram_listener_rationale_53",
+      "telegram_listener_rationale_93",
+      "telegram_listener_telegramsignallistener",
+      "telegram_listener_telegramsignallistener_claim_message",
+      "telegram_listener_telegramsignallistener_from_environment",
+      "telegram_listener_telegramsignallistener_init",
+      "telegram_listener_telegramsignallistener_initialize_state",
+      "telegram_listener_telegramsignallistener_run",
+      "telegram_listener_telegramsignallistener_stop"
+    ],
+    "2": [
+      "basehttpmiddleware",
+      "main_nocacheuimiddleware",
+      "main_nocacheuimiddleware_dispatch",
+      "main_queuemiddleware",
+      "main_queuemiddleware_dispatch",
+      "main_queuemiddleware_init",
+      "main_queuemiddleware_worker",
+      "main_rationale_238",
+      "main_rationale_478",
+      "main_rationale_58",
+      "main_trade_signal_webhook",
+      "main_webhook_auth_ok",
+      "post",
+      "request"
+    ],
+    "3": [
+      "ui_script",
+      "ui_script_balanceelements",
+      "ui_script_closedtradeselements",
+      "ui_script_currentsignalselements",
+      "ui_script_form",
+      "ui_script_formatdirection",
+      "ui_script_opentradeselements",
+      "ui_script_setriskdata",
+      "ui_script_showriskform",
+      "ui_script_updatebalance",
+      "ui_script_updateclosedtrades",
+      "ui_script_updatecurrentsignals",
+      "ui_script_updateopentrades",
+      "ui_script_updateriskdata"
+    ],
+    "4": [
+      "any",
+      "main_can_start_sequence",
+      "main_can_start_trade",
+      "main_manage_martingale",
+      "main_martingale_exposure",
+      "main_rationale_260",
+      "main_rationale_265",
+      "main_risk_rejection",
+      "main_take_trade",
+      "main_to_float",
+      "main_trade"
+    ],
+    "5": [
+      "path",
+      "playwright_scraper",
+      "playwright_scraper_collect",
+      "playwright_scraper_extract_auth",
+      "playwright_scraper_main",
+      "playwright_scraper_rationale_1",
+      "playwright_scraper_save_to_env",
+      "telegram_login",
+      "telegram_login_main",
+      "telegram_login_rationale_1"
+    ],
+    "6": [
+      "test",
+      "test_get_asset_emojis",
+      "test_get_direction_emoji",
+      "test_get_next_5min_interval_time",
+      "test_rationale_28",
+      "test_rationale_47",
+      "test_rationale_55",
+      "test_rationale_83",
+      "test_send_test_signal"
+    ],
+    "7": [
+      "basemodel",
+      "main_account_details",
+      "main_account_details_update_balance",
+      "main_active_sequences",
+      "main_rationale_287",
+      "main_signal_fields",
+      "main_trade_fields"
+    ],
+    "8": [
+      "main_ensure_webhook_secret",
+      "main_env_file_path",
+      "main_env_flag",
+      "main_persist_env_value",
+      "main_rationale_186",
+      "main_rationale_192",
+      "main_rationale_209"
+    ],
+    "9": [
+      "main_handle_telegram_signal",
+      "main_parse_signal",
+      "main_rationale_387",
+      "main_signal",
+      "parse_data",
+      "parse_data_parse_macrodroid_trade_data",
+      "parse_data_rationale_80"
+    ],
+    "10": [
+      "main_purge_stale_sequences",
+      "main_rationale_300",
+      "main_rationale_309",
+      "main_sequence_max_age_seconds"
+    ],
+    "11": [
+      "pkg_po_signal_bot_2"
+    ]
+  },
+  "cohesion": {
+    "0": 0.23529411764705882,
+    "1": 0.15,
+    "2": 0.17582417582417584,
+    "3": 0.18681318681318682,
+    "4": 0.2545454545454545,
+    "5": 0.24444444444444444,
+    "6": 0.3055555555555556,
+    "7": 0.2857142857142857,
+    "8": 0.2857142857142857,
+    "9": 0.2857142857142857,
+    "10": 0.5,
+    "11": 1.0
+  },
+  "gods": [
+    {
+      "id": "telegram_listener_telegramsignallistener",
+      "label": "TelegramSignalListener",
+      "degree": 10
+    },
+    {
+      "id": "main_take_trade",
+      "label": "take_trade()",
+      "degree": 9
+    },
+    {
+      "id": "main_lifespan",
+      "label": "lifespan()",
+      "degree": 8
+    },
+    {
+      "id": "main_trade_signal_webhook",
+      "label": "trade_signal_webhook()",
+      "degree": 8
+    },
+    {
+      "id": "main_to_float",
+      "label": "to_float()",
+      "degree": 7
+    },
+    {
+      "id": "main_queuemiddleware",
+      "label": "QueueMiddleware",
+      "degree": 6
+    },
+    {
+      "id": "main_manage_martingale",
+      "label": "manage_martingale()",
+      "degree": 6
+    },
+    {
+      "id": "main_can_start_sequence",
+      "label": "can_start_sequence()",
+      "degree": 5
+    },
+    {
+      "id": "test_send_test_signal",
+      "label": "send_test_signal()",
+      "degree": 5
+    },
+    {
+      "id": "main_ensure_webhook_secret",
+      "label": "ensure_webhook_secret()",
+      "degree": 5
+    }
+  ],
+  "surprises": [
+    {
+      "source": "lifespan()",
+      "target": "TelegramSignalListener",
+      "source_files": [
+        "main.py",
+        "telegram_listener.py"
+      ],
+      "confidence": "INFERRED",
+      "relation": "uses",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories"
+    },
+    {
+      "source": "parse_signal()",
+      "target": "parse_macrodroid_trade_data()",
+      "source_files": [
+        "main.py",
+        "parse_data.py"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "connects across different repos/directories"
+    }
+  ],
+  "tokens": {
+    "input": 0,
+    "output": 0
+  }
+}
