@@ -28,7 +28,7 @@ authentication.
 - [Risk controls](#risk-controls)
 - [HTTP endpoints](#http-endpoints)
 - [Testing ingestion](#testing-ingestion)
-- [Moving to another PC](#moving-to-another-pc)
+- [Installation and startup](#installation-and-startup)
 - [Troubleshooting](#troubleshooting)
 - [Legal](#legal)
 
@@ -515,99 +515,97 @@ curl -s http://127.0.0.1:9634/health
 
 ---
 
-## Moving to another PC
+## Installation and startup
 
-Only one of the three moving parts actually travels with the code. Plan the move around the other two.
+The full path from a fresh checkout to a verified, running bot.
 
-| Part | Runs where | Moves with the repo? |
-| --- | --- | --- |
-| Python app (`main.py`) and dashboard | The new PC | Yes |
-| Edge profile used to capture the `ssid` | The new PC - machine-specific | **No** - recreate it |
-| MacroDroid and the phone | Android phone | Unchanged, if the tunnel URL stays the same |
-
-### What the new PC needs
+### Prerequisites
 
 - Python 3.13+ (`.python-version` pins `3.13`, `pyproject.toml` requires `>=3.13`)
 - [uv](https://docs.astral.sh/uv/) - recommended, so `uv.lock` gives an identical dependency set
-- Microsoft Edge - only for the one-time session capture
-- ngrok v3 with your authtoken, ideally reusing the **same reserved dev domain**
-- Your Pocket Option login, to log in manually during the capture
-- Outbound internet access to Pocket Option, and to `my.telegram.org` if you use the listener
+- Microsoft Edge - needed once, to capture the Pocket Option session
+- ngrok v3 with your authtoken, for the webhook tunnel
+- A Pocket Option account, plus an Android phone running MacroDroid unless you use the direct
+  Telegram listener
 
-The dependency set is portable. `binaryoptionstoolsv2==0.2.15` ships prebuilt wheels for `win32`,
-`win_amd64`, `manylinux` (x86_64, aarch64, armv7l), `musllinux` and macOS, tagged `cp310-abi3` - so
-it installs on Windows and Linux on 3.13 without a Rust toolchain. Rust is only needed if no wheel
-matches your platform and pip falls back to the source tarball.
+### 1. Install the dependencies
 
-### What to copy, and what not to
+From the project root:
 
 ```bash
-git clone <your-remote>    # or copy the folder, minus the items below
-```
-
-Do **not** copy:
-
-- `.venv/` - platform and architecture specific, rebuild it with `uv sync`
-- `data/` - gitignored. It holds the Edge profile (`data/pocketoption-playwright`, hundreds of MB)
-  and the SQLite state. Both are machine-local, and regenerating them is cleaner than migrating
-- `__pycache__/`
-
-### Steps
-
-1. Install Python 3.13, uv, Edge and ngrok on the new machine.
-2. From the project root, sync the dependencies: `uv sync`
-3. Recreate `.env` from `.env.example`:
-   - copy `WEBHOOK_SECRET` **exactly** from the old machine, or you must also edit MacroDroid
-   - copy your tuned risk limits (`MARTINGALE_ENABLED`, `MAX_TRADE_AMOUNT`, and so on)
-   - leave `ssid` for step 5; it is captured from a live browser session, not copied
-4. Always start from the project root. Paths are relative: `.env` resolves through
-   `Path(__file__).with_name(".env")`, and `data/pocketoption-playwright` plus
-   `data/signal_bot.sqlite3` resolve against the current working directory.
-5. Capture the broker session on the new machine:
-   `uv run python playwright_scraper.py --account-type DEMO --timeout 120`
-   Log in manually in the Edge window that opens and leave the cabinet page open. This writes
-   `ssid`, `UID` and `ACCOUNT_TYPE` to `.env`.
-6. Start the app: `uv run uvicorn main:app --host 127.0.0.1 --port 9634`
-   Then check `http://127.0.0.1:9634/health` for `broker_connected: true`.
-7. Start the tunnel on the **same URL** you use today:
-   `ngrok http 9634 --url https://<your-assigned-name>.ngrok-free.app`
-   Keeping the same domain means the MacroDroid `tunnel_url` variable and the shared secret keep
-   working with no phone-side changes.
-8. Verify end to end with `uv run python test.py`, then confirm `webhook.last_result` reads
-   `accepted` in `/health`.
-
-### Platform notes
-
-- **Windows: Edge is not on `PATH`.** `playwright_scraper.py` only probes `microsoft-edge-stable`
-  and `microsoft-edge`, which are the Linux names, so the capture fails with *"Microsoft Edge was
-  not found"*. Set the path explicitly in `.env`:
-  `EDGE_BINARY=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`
-  (or `C:\Program Files\Microsoft\Edge\Application\msedge.exe`). This is the most likely thing to
-  trip you up on Windows.
-- **`playwright install` is not required.** The scraper passes `executable_path=edge_binary`, so it
-  drives your system Edge instead of a bundled Chromium. You would only need the browser download
-  if you launch Playwright without `executable_path`.
-- **Run only one instance.** The ngrok free tier allows one agent session per reserved domain, and
-  two bot instances on the same Pocket Option account fight over trade state. Stop the service on
-  the old PC before starting on the new one.
-- **Timezone is inverted in pytz.** `SIGNAL_TIMEZONE` and the MacroDroid `timezone` variable both
-  use the flipped offset: `Etc/GMT-2` means **GMT+2**. A mismatch silently shifts every entry time.
-- **Update the service units.** The systemd units and NSSM commands in
-  [Running as a service](#running-as-a-service-survives-restarts) contain absolute paths from this
-  machine; point `WorkingDirectory` and `ExecStart` at the new checkout.
-- **Treat `.env` and the Edge profile as secrets.** They carry a live broker session, so do not
-  migrate them to an untrusted machine, and never commit either.
-
-### Shortest path
-
-```bash
-git clone <repo> && cd Signal_bot_for_telegram-main
 uv sync
-cp .env.example .env                                              # paste WEBHOOK_SECRET + risk limits
-uv run python playwright_scraper.py --account-type DEMO           # log in; captures ssid
-uv run uvicorn main:app --host 127.0.0.1 --port 9634
-ngrok http 9634 --url https://<same-domain>.ngrok-free.app
 ```
+
+`uv.lock` is committed, so this resolves to the same versions every time. The broker library ships
+prebuilt wheels for Windows, Linux and macOS on Python 3.13, so no Rust toolchain is required. If
+you prefer pip, use the fallback instead: `pip install -r requirements.txt`
+
+### 2. Create the configuration file
+
+```bash
+cp .env.example .env        # Windows: Copy-Item .env.example .env
+```
+
+At minimum set `WEBHOOK_SECRET` - generate one with
+`python -c "import secrets; print(secrets.token_urlsafe(32))"` - and leave `ssid` for the next step.
+[Configuration](#configuration) documents every key.
+
+### 3. Capture the Pocket Option session
+
+```bash
+uv run python playwright_scraper.py --account-type DEMO --timeout 120
+```
+
+A headed Edge window opens. Log in manually, open the cabinet and leave the page open; the script
+writes `ssid`, `UID` and `ACCOUNT_TYPE` to `.env`. Start with `DEMO`. See
+[Capturing the Pocket Option session](#capturing-the-pocket-option-session) for details.
+
+### 4. Start the app
+
+```bash
+uv run uvicorn main:app --host 127.0.0.1 --port 9634
+```
+
+Always start from the project root: `.env` and the `data/` paths are resolved relative to it.
+
+- Dashboard: `http://127.0.0.1:9634/ui/`
+- Health: `http://127.0.0.1:9634/health`
+
+If `ssid` is missing or the broker rejects it, the app still starts with trading disabled and
+`/health` reports `broker_connected: false`. This is intentional, so a service manager restart
+cannot hang on input.
+
+### 5. Expose the webhook
+
+```bash
+ngrok http 9634 --url https://<your-assigned-name>.ngrok-free.app
+```
+
+Keep this URL stable across restarts, then point the MacroDroid `tunnel_url` variable at
+`https://<your-assigned-name>.ngrok-free.app/trade_signal`. See
+[Webhook transport](#webhook-transport-stable-public-url) for the alternatives.
+
+### 6. Verify
+
+```bash
+uv run python test.py                        # posts a synthetic signal
+curl -s http://127.0.0.1:9634/health
+```
+
+`webhook.last_result` should read `accepted`. A `401` means the secret does not match; a `503` means
+the broker is not connected.
+
+### Notes
+
+- **Windows: set `EDGE_BINARY`.** `playwright_scraper.py` only probes the Linux Edge binary names
+  (`microsoft-edge-stable`, `microsoft-edge`), so step 3 fails with *"Microsoft Edge was not found"*
+  unless you point it at the executable, for example
+  `EDGE_BINARY=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`.
+- **`playwright install` is not required.** The scraper passes `executable_path` and drives your
+  installed Edge.
+- **Timezone is inverted in pytz.** `SIGNAL_TIMEZONE` and the MacroDroid `timezone` variable use the
+  flipped offset: `Etc/GMT-2` means **GMT+2**. Getting it wrong shifts every entry time.
+- **Never commit `.env`.** It holds a live broker session.
 
 ---
 
@@ -623,7 +621,7 @@ ngrok http 9634 --url https://<same-domain>.ngrok-free.app
 | Trades not placed but signals accepted | Signal arrived after its entry time | Signals are rejected as late. Check the timing and the timezone. |
 | Service will not start on Linux | Wrong path in the unit file | Confirm `WorkingDirectory` and `ExecStart` point at the actual venv. |
 | Service will not start on Windows | NSSM paths or permissions | Verify the venv path and check `logs\signalbot-error.log`. |
-| Scraper says "Microsoft Edge was not found" | Edge is not on `PATH` (normal on Windows) | Set `EDGE_BINARY` in `.env`; see [Moving to another PC](#moving-to-another-pc). |
+| Scraper says "Microsoft Edge was not found" | Edge is not on `PATH` (normal on Windows) | Set `EDGE_BINARY` in `.env`; see [Installation and startup](#installation-and-startup). |
 | ngrok error `ERR_NGROK_313` | Tried a custom subdomain on the free plan | Use your assigned dev domain, or upgrade. |
 | ngrok error about unsupported version | Using v2 | Upgrade to ngrok agent v3. |
 
