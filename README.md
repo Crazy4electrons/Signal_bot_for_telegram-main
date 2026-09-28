@@ -28,6 +28,7 @@ authentication.
 - [Risk controls](#risk-controls)
 - [HTTP endpoints](#http-endpoints)
 - [Testing ingestion](#testing-ingestion)
+- [Moving to another PC](#moving-to-another-pc)
 - [Troubleshooting](#troubleshooting)
 - [Legal](#legal)
 
@@ -419,13 +420,38 @@ enforces these limits before every order, initial or recovery:
 | `MARTINGALE_ENABLED` | `true` | When `false`, a losing trade ends the sequence instead of recovering. |
 | `MAX_TRADE_AMOUNT` | `16` | Rejects any single trade above this amount. |
 | `MAX_SEQUENCE_EXPOSURE` | `31` | Rejects a sequence whose worst-case total exceeds this. Computed as the sum of all legs. |
-| `MAX_OPEN_TRADES` | `1` | Rejects new signals while this many trades are already open. |
+| `MAX_OPEN_TRADES` | `3` | Total concurrent sequences. Signals from different providers or different assets can run at the same time up to this cap. |
+| `MAX_OPEN_TRADES_PER_ASSET` | `1` | Concurrent sequences on the same asset. `0` disables the check. |
+| `MAX_OPEN_TRADES_PER_PROVIDER` | `0` | Concurrent sequences per provider. `0` means unlimited. |
+| `STALE_SEQUENCE_SECONDS` | `0` | Age after which a sequence is assumed dead and its slot reclaimed. `0` derives it as `timeframe x (martingale_levels + 1) x 2 + 120`. |
 | `MIN_BALANCE_RESERVE` | `0` | Rejects a trade that would drop the balance below this floor. |
 | `drawback_threshold` | `-16` | Halts all signal processing once the daily P/L breaches this floor. |
 
 Worst-case exposure for the defaults (1 initial + 3 recovery levels, multiplier 2) is
 `1 + 2 + 4 + 8 = 15`, which is below the `31` ceiling. Raising levels or the multiplier without
 raising the ceiling will cause sequences to be rejected rather than sized recklessly.
+
+**Concurrency and exposure.** `MAX_OPEN_TRADES` bounds how many sequences run at once, but each
+sequence can still reach the full `MAX_SEQUENCE_EXPOSURE`. With the defaults, 3 concurrent sequences
+represent up to `3 x 15 = 45` of potential exposure, which can exceed a small account. Set
+`MIN_BALANCE_RESERVE` and keep the martingale levels modest so the total stays within the balance
+you are willing to risk.
+
+**Why a sequence can be rejected.** The rejection message names the specific limit and lists the
+open sequences, for example:
+
+```text
+maximum open trades reached (3/3): providerA/EURUSD_otc/CALL, providerB/GBPUSD_otc/CALL
+already 1 open trade(s) on EURUSD_otc (max_open_trades_per_asset=1)
+```
+
+A recovery leg excludes its own parent trade from these counts, so a martingale step is never
+blocked by the trade it is recovering.
+
+If a result lookup never returns, the sequence would otherwise hold its slot forever. Two
+mechanisms prevent that: a failed sequence releases its slot immediately, and
+`purge_stale_sequences()` reclaims any sequence older than `STALE_SEQUENCE_SECONDS` (derived from
+the timeframe by default).
 
 ---
 
@@ -489,6 +515,102 @@ curl -s http://127.0.0.1:9634/health
 
 ---
 
+## Moving to another PC
+
+Only one of the three moving parts actually travels with the code. Plan the move around the other two.
+
+| Part | Runs where | Moves with the repo? |
+| --- | --- | --- |
+| Python app (`main.py`) and dashboard | The new PC | Yes |
+| Edge profile used to capture the `ssid` | The new PC - machine-specific | **No** - recreate it |
+| MacroDroid and the phone | Android phone | Unchanged, if the tunnel URL stays the same |
+
+### What the new PC needs
+
+- Python 3.13+ (`.python-version` pins `3.13`, `pyproject.toml` requires `>=3.13`)
+- [uv](https://docs.astral.sh/uv/) - recommended, so `uv.lock` gives an identical dependency set
+- Microsoft Edge - only for the one-time session capture
+- ngrok v3 with your authtoken, ideally reusing the **same reserved dev domain**
+- Your Pocket Option login, to log in manually during the capture
+- Outbound internet access to Pocket Option, and to `my.telegram.org` if you use the listener
+
+The dependency set is portable. `binaryoptionstoolsv2==0.2.15` ships prebuilt wheels for `win32`,
+`win_amd64`, `manylinux` (x86_64, aarch64, armv7l), `musllinux` and macOS, tagged `cp310-abi3` - so
+it installs on Windows and Linux on 3.13 without a Rust toolchain. Rust is only needed if no wheel
+matches your platform and pip falls back to the source tarball.
+
+### What to copy, and what not to
+
+```bash
+git clone <your-remote>    # or copy the folder, minus the items below
+```
+
+Do **not** copy:
+
+- `.venv/` - platform and architecture specific, rebuild it with `uv sync`
+- `data/` - gitignored. It holds the Edge profile (`data/pocketoption-playwright`, hundreds of MB)
+  and the SQLite state. Both are machine-local, and regenerating them is cleaner than migrating
+- `__pycache__/`
+
+### Steps
+
+1. Install Python 3.13, uv, Edge and ngrok on the new machine.
+2. From the project root, sync the dependencies: `uv sync`
+3. Recreate `.env` from `.env.example`:
+   - copy `WEBHOOK_SECRET` **exactly** from the old machine, or you must also edit MacroDroid
+   - copy your tuned risk limits (`MARTINGALE_ENABLED`, `MAX_TRADE_AMOUNT`, and so on)
+   - leave `ssid` for step 5; it is captured from a live browser session, not copied
+4. Always start from the project root. Paths are relative: `.env` resolves through
+   `Path(__file__).with_name(".env")`, and `data/pocketoption-playwright` plus
+   `data/signal_bot.sqlite3` resolve against the current working directory.
+5. Capture the broker session on the new machine:
+   `uv run python playwright_scraper.py --account-type DEMO --timeout 120`
+   Log in manually in the Edge window that opens and leave the cabinet page open. This writes
+   `ssid`, `UID` and `ACCOUNT_TYPE` to `.env`.
+6. Start the app: `uv run uvicorn main:app --host 127.0.0.1 --port 9634`
+   Then check `http://127.0.0.1:9634/health` for `broker_connected: true`.
+7. Start the tunnel on the **same URL** you use today:
+   `ngrok http 9634 --url https://<your-assigned-name>.ngrok-free.app`
+   Keeping the same domain means the MacroDroid `tunnel_url` variable and the shared secret keep
+   working with no phone-side changes.
+8. Verify end to end with `uv run python test.py`, then confirm `webhook.last_result` reads
+   `accepted` in `/health`.
+
+### Platform notes
+
+- **Windows: Edge is not on `PATH`.** `playwright_scraper.py` only probes `microsoft-edge-stable`
+  and `microsoft-edge`, which are the Linux names, so the capture fails with *"Microsoft Edge was
+  not found"*. Set the path explicitly in `.env`:
+  `EDGE_BINARY=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`
+  (or `C:\Program Files\Microsoft\Edge\Application\msedge.exe`). This is the most likely thing to
+  trip you up on Windows.
+- **`playwright install` is not required.** The scraper passes `executable_path=edge_binary`, so it
+  drives your system Edge instead of a bundled Chromium. You would only need the browser download
+  if you launch Playwright without `executable_path`.
+- **Run only one instance.** The ngrok free tier allows one agent session per reserved domain, and
+  two bot instances on the same Pocket Option account fight over trade state. Stop the service on
+  the old PC before starting on the new one.
+- **Timezone is inverted in pytz.** `SIGNAL_TIMEZONE` and the MacroDroid `timezone` variable both
+  use the flipped offset: `Etc/GMT-2` means **GMT+2**. A mismatch silently shifts every entry time.
+- **Update the service units.** The systemd units and NSSM commands in
+  [Running as a service](#running-as-a-service-survives-restarts) contain absolute paths from this
+  machine; point `WorkingDirectory` and `ExecStart` at the new checkout.
+- **Treat `.env` and the Edge profile as secrets.** They carry a live broker session, so do not
+  migrate them to an untrusted machine, and never commit either.
+
+### Shortest path
+
+```bash
+git clone <repo> && cd Signal_bot_for_telegram-main
+uv sync
+cp .env.example .env                                              # paste WEBHOOK_SECRET + risk limits
+uv run python playwright_scraper.py --account-type DEMO           # log in; captures ssid
+uv run uvicorn main:app --host 127.0.0.1 --port 9634
+ngrok http 9634 --url https://<same-domain>.ngrok-free.app
+```
+
+---
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
@@ -501,6 +623,7 @@ curl -s http://127.0.0.1:9634/health
 | Trades not placed but signals accepted | Signal arrived after its entry time | Signals are rejected as late. Check the timing and the timezone. |
 | Service will not start on Linux | Wrong path in the unit file | Confirm `WorkingDirectory` and `ExecStart` point at the actual venv. |
 | Service will not start on Windows | NSSM paths or permissions | Verify the venv path and check `logs\signalbot-error.log`. |
+| Scraper says "Microsoft Edge was not found" | Edge is not on `PATH` (normal on Windows) | Set `EDGE_BINARY` in `.env`; see [Moving to another PC](#moving-to-another-pc). |
 | ngrok error `ERR_NGROK_313` | Tried a custom subdomain on the free plan | Use your assigned dev domain, or upgrade. |
 | ngrok error about unsupported version | Using v2 | Upgrade to ngrok agent v3. |
 
