@@ -1,245 +1,947 @@
-:root{
-    --primary-color: #0000ff;
-    --secondary-color: #8cb102;
-    --background-color: #c5fef9;
-    --background-color-accent: #031c36;
-    --text-color: #2b0040;
-    --text-color-accent: #ffc0ee;
-    --header-color: #346200;
-    --title-color: #d18c14;
-    --shadow-color:#007269d0;
-    --section-color: #9f51ff12;
+/* ==========================================================================
+   Pocket Option Signal Bot — operations desk
+   One surface, hairline rules, mono numerals. The brass accents carry
+   information (the exposure ladder, live state, focus), never decoration.
+   ========================================================================== */
 
+/* --- Typefaces: latin subsets, self-hosted so the desk renders offline ---- */
+
+@font-face {
+	font-family: "Archivo";
+	src: url("fonts/archivo-var-latin.woff2") format("woff2");
+	font-weight: 400 700;
+	font-style: normal;
+	font-display: swap;
+	unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+		U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+		U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
-*{
-    box-sizing: border-box;
-    background-clip: border-box;
+@font-face {
+	font-family: "IBM Plex Mono";
+	src: url("fonts/plex-mono-400-latin.woff2") format("woff2");
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+	unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+		U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+		U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
+@font-face {
+	font-family: "IBM Plex Mono";
+	src: url("fonts/plex-mono-500-latin.woff2") format("woff2");
+	font-weight: 500;
+	font-style: normal;
+	font-display: swap;
+	unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+		U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+		U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* --- Tokens: dark is the desk default, light is the daylight ledger ------- */
+
+:root {
+	color-scheme: dark;
+
+	--ground: #0E1418;
+	--panel: #151C21;
+	--panel-2: #1B242A;
+	--rule: #232E35;
+	--rule-strong: #34424A;
+	--row-hover: rgb(255 255 255 / 0.024);
+
+	--ink: #E4EBEF;
+	--ink-soft: #9CAAB3;
+	--ink-faint: #6F7F89;
+
+	--accent: #D08B3C;
+	--gain: #43B98A;
+	--loss: #E4707A;
+	--focus: #E8A85A;
+
+	--font-sans: "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	--font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+	--space-1: 4px;
+	--space-2: 8px;
+	--space-3: 12px;
+	--space-4: 16px;
+	--space-5: 20px;
+	--space-6: 28px;
+	--space-7: 36px;
+	--space-8: 52px;
+
+	--radius: 3px;
+	--radius-chip: 2px;
+	--gutter: clamp(16px, 3.4vw, 40px);
+}
+
+[data-theme="light"] {
+	color-scheme: light;
+
+	--ground: #EFF1F2;
+	--panel: #FFFFFF;
+	--panel-2: #F6F8F8;
+	--rule: #D8DEE2;
+	--rule-strong: #AFBABF;
+	--row-hover: rgb(20 27 32 / 0.03);
+
+	--ink: #141B20;
+	--ink-soft: #5A6A73;
+	--ink-faint: #7C8B93;
+
+	--accent: #9A5F17;
+	--gain: #1D7A56;
+	--loss: #B02A33;
+	--focus: #9A5F17;
+}
+
+/* --- Base ---------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
 
 body {
-    font-family: Arial, Helvetica, sans-serif;
-    margin: 16px;
-    color: #222;    
+	margin: 0 auto;
+	padding: 0 var(--gutter) var(--space-8);
+	max-width: 1440px;
+	background: var(--ground);
+	color: var(--ink);
+	font-family: var(--font-sans);
+	font-size: 14px;
+	line-height: 1.5;
 }
 
-header{
-background-color: var(--header-color);
-    margin: 0 0 20px 0;
-    display: flex;
-    flex-direction: row;
-    flex-wrap: nowrap;
-    justify-content: space-between;
-    align-items: center;
-    color: var(--title-color);
-    padding: 0 20px;
-    border-radius: 25px;
-    box-shadow: 0px 0px 9px var(--shadow-color);
+h1,
+h2,
+h3,
+p,
+dl,
+dd,
+dt,
+ol,
+ul {
+	margin: 0;
 }
 
-header button {
-    font-size: 18px;
-    padding: 6px 6px;
-    border: none;
-    border-radius: 100%;
-    background-color: var(--secondary-color);
-    color: white;
-    cursor: pointer;
+ol,
+ul {
+	padding: 0;
+	list-style: none;
 }
 
-section {
-    padding: 8px;
-    border: 1px solid var(--secondary-color);
-    border-radius: 6px;
-    background: var(--section-color);
-    display: flex;
-    flex-direction: column;
-    flex-wrap: nowrap;
-    justify-content: flex-start;
-    align-items: flex-start;
-    margin: 12px 0;
+.mono,
+.num {
+	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
 }
 
-.card {
-    box-shadow: 0px 0px 9px var(--shadow-color);
-    background-color: var(--background-color-accent);
-    color: var(--text-color-accent);
-    padding: 12px;
-    border-radius: 12px; 
-    border: 1px solid var(--secondary-color);
-    margin: 12px 0;
-}
-.card-title {
-    font-size: 20px;
-    font-weight: bold;
-    color: var(--header-color);
-    background-color: var(--secondary-color);
-    padding: 10px;
-    border-radius: 10px;
-    margin-top: 1px;
-    box-shadow: 0px 0px 9px var(--shadow-color), inset -6px 6px 14px -5px #ffffff;
-}
-.card-horizontal {
-    display: flex;
-    flex-direction: row;
-    flex-wrap: wrap;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-   
-}
-.card-display-text {
-    font-size: 16px;
-    font-weight: normal;
-    color: var(--text-color);
-    margin: 5px;
-}
-.table-div{
-    width: 100%;
-    overflow-x: auto;
+:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
 }
 
-.table{
-    /* display: grid; */
-    min-width: 100%;
-    border: 1px solid var(--primary-color);
-    /* margin: 1px auto; */
-}
-.table thead{
-    font-weight: bold;
-    border: 2px solid var(--primary-color);
-    margin: 2px 0;
-    padding: 0;
-    background-color: var(--secondary-color);
-    /* color: var(--text-color-accent); */
-    display: flex;
-    flex-direction: row;
-    flex-wrap: nowrap;
-    justify-content: space-around;
-    align-items: center;
-    min-width: 100%;
-}
-.table tr {
-    display: flex;
-    flex-direction: row;
-    flex-wrap: nowrap;
-    justify-content: space-between;
-    align-items: center;
-    width: 100%;
-    
-}
-.table th, .table td {
-    padding: 6px 4px;
-    text-align: left;
-    flex:1;
-
-    /* min-width: 100px; */
-}
-.table th:last-child, .table td:last-child {
-    text-align: right;
-    flex:2
-}
-.table tbody td{
-        border-left: 1px solid var(--primary-color);
-    border-right: 1px solid var(--primary-color);
-    width: 100%;
-    height: 100%;
-}
-.table tbody tr {
-    /* padding: 6px 4px; */
-    border-bottom: 1px solid var(--primary-color);
-
-}
-/* .table thead tr {
-    display: flex;
-    flex-direction: row;
-    flex-wrap: nowrap;
-    justify-content: space-between;
-    align-items: center;
-    padding: 6px 4px;} */
-
-
-
-
-
-.trade,
-.signal {
-    padding: 6px 4px;
-    border-bottom: 1px dashed #ddd;
+::selection {
+	background: color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
-.trade:last-child,
-.signal:last-child {
-    border-bottom: none;
+.skip-link {
+	position: fixed;
+	top: var(--space-2);
+	left: var(--space-2);
+	z-index: 40;
+	padding: var(--space-2) var(--space-3);
+	background: var(--panel);
+	border: 1px solid var(--focus);
+	border-radius: var(--radius);
+	color: var(--ink);
+	font-size: 13px;
+	text-decoration: none;
+	transform: translateY(-200%);
 }
 
-.empty {
-    color: #666;
+.skip-link:focus-visible {
+	transform: none;
 }
 
-.error {
-    color: #b00;
+/* --- Masthead ------------------------------------------------------------ */
+
+.masthead {
+	position: relative;
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-3) var(--space-6);
+	align-items: center;
+	justify-content: space-between;
+	padding: var(--space-5) 0 var(--space-4);
+	border-bottom: 1px solid var(--rule-strong);
 }
 
-.info {
-    color: #066;
+/* The one arrival moment: the desk draws its own rule once, on load. */
+.masthead::after {
+	content: "";
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: -1px;
+	height: 1px;
+	background: var(--accent);
+	transform: scaleX(0);
+	transform-origin: left center;
+	animation: draw-rule 520ms cubic-bezier(0.16, 0.84, 0.44, 1) 60ms forwards;
 }
 
-
-
-#risk_form{
-    margin: 10% auto;
-    padding: 2%;
-    border: 2px solid var(--primary-color);
-    border-radius: 12px;
-    width: 30%;
-    min-height: 50%;
-    background-color: var(--background-color);
-    box-shadow: 0 0 19px 6px var(--shadow-color);
-    display: flex;
-    max-width: 100%;
-    flex-direction: column;
-    flex-wrap: wrap;
-    align-content: center;
-    align-items: stretch;
+@keyframes draw-rule {
+	to {
+		transform: scaleX(1);
+	}
 }
 
-#risk_form label, #risk_form input{
-    display: block;
-    margin: 12px 0;
-    font-size: 18px;
-}
-.popup_bg {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgba(0, 0, 0, 0.5);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 1000;
-}
-#risk_form button {
-    margin: 12px;
+.masthead__brand {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
 }
 
+.mark {
+	width: 19px;
+	height: 19px;
+	flex: none;
+	color: var(--accent);
+}
+
+.mark rect {
+	fill: currentColor;
+}
+
+.mark rect:nth-child(2) {
+	opacity: 0.7;
+}
+
+.mark rect:nth-child(3) {
+	opacity: 0.44;
+}
+
+.masthead__title {
+	font-size: 16px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	line-height: 1.2;
+}
+
+.masthead__tools {
+	display: flex;
+	align-items: center;
+	gap: var(--space-4);
+}
+
+.status {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-2);
+	font-size: 12.5px;
+	color: var(--ink-soft);
+}
+
+.status__dot {
+	align-self: center;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--ink-faint);
+	flex: none;
+}
+
+.status__label {
+	color: var(--ink);
+}
+
+.status__time {
+	font-family: var(--font-mono);
+	color: var(--ink-faint);
+}
+
+.status[data-state="live"] .status__dot {
+	background: var(--gain);
+}
+
+.status[data-state="pending"] .status__dot {
+	background: var(--accent);
+}
+
+.status[data-state="stalled"] .status__dot {
+	background: var(--loss);
+}
+
+.status[data-state="live"].is-tick .status__dot {
+	animation: tick 700ms ease-out;
+}
+
+@keyframes tick {
+	from {
+		box-shadow: 0 0 0 0 color-mix(in srgb, var(--gain) 60%, transparent);
+	}
+
+	to {
+		box-shadow: 0 0 0 7px color-mix(in srgb, var(--gain) 0%, transparent);
+	}
+}
+
+.icon-button {
+	display: grid;
+	place-items: center;
+	width: 34px;
+	height: 34px;
+	padding: 0;
+	background: transparent;
+	border: 1px solid var(--rule-strong);
+	border-radius: var(--radius);
+	color: var(--ink-soft);
+	cursor: pointer;
+	transition: color 140ms ease, border-color 140ms ease;
+}
+
+.icon-button:hover {
+	color: var(--accent);
+	border-color: var(--accent);
+}
+
+.icon-button svg {
+	grid-area: 1 / 1;
+	width: 17px;
+	height: 17px;
+}
+
+.icon-button__moon {
+	display: none;
+	fill: currentColor;
+	stroke: none;
+}
+
+.icon-button__sun {
+	display: none;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.7;
+	stroke-linecap: round;
+}
+
+[data-theme="dark"] .icon-button__sun,
+[data-theme="light"] .icon-button__moon {
+	display: block;
+}
+
+/* --- Regions: rules and rhythm do the structuring ------------------------ */
+
+main {
+	display: grid;
+	gap: var(--space-7);
+	padding-top: var(--space-7);
+}
+
+.region {
+	display: grid;
+	gap: var(--space-4);
+	align-content: start;
+	border-top: 1px solid var(--rule);
+	padding-top: var(--space-5);
+}
+
+/* The masthead rule already opens the page. */
+.region--account {
+	border-top: none;
+	padding-top: 0;
+	gap: var(--space-5);
+}
+
+.region__heading {
+	font-size: 16px;
+	font-weight: 600;
+	letter-spacing: -0.005em;
+}
+
+.region__meta {
+	font-size: 12.5px;
+	color: var(--ink-soft);
+}
+
+.region__note {
+	font-size: 12px;
+	color: var(--ink-faint);
+	max-width: 42ch;
+}
+
+/* Tuck a sub-line under its heading instead of paying the grid gap twice. */
+.region__heading + .region__meta,
+.region__heading + .region__note {
+	margin-top: calc(var(--space-4) * -1 + 2px);
+}
+
+.notice {
+	border-left: 2px solid var(--accent);
+	padding-left: var(--space-4);
+	font-size: 13.5px;
+	color: var(--ink-soft);
+	max-width: 68ch;
+}
+
+/* --- Account readings: one ledger line, not three cards ------------------ */
+
+.readings {
+	display: grid;
+	grid-template-columns: minmax(0, 1.3fr) repeat(2, minmax(0, 1fr));
+}
+
+.reading {
+	display: grid;
+	gap: var(--space-2);
+	align-content: start;
+	padding: 0 var(--space-6);
+	border-left: 1px solid var(--rule);
+}
+
+.reading:first-child {
+	padding-left: 0;
+	border-left: none;
+}
+
+.reading__label {
+	font-size: 12.5px;
+	font-weight: 500;
+	color: var(--ink-soft);
+}
+
+.reading__value {
+	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
+	font-size: 26px;
+	line-height: 1.05;
+	color: var(--ink);
+	transition: color 900ms ease;
+}
+
+.reading--primary .reading__value {
+	font-size: clamp(34px, 4.2vw, 50px);
+	font-weight: 500;
+	letter-spacing: -0.015em;
+}
+
+.reading__value[data-sign="pos"] {
+	color: var(--gain);
+}
+
+.reading__value[data-sign="neg"] {
+	color: var(--loss);
+}
+
+/* A value that moved between polls says so, then settles. */
+[data-flash].is-changed .reading__value {
+	color: var(--accent);
+	transition: color 120ms ease;
+}
+
+/* --- Desk grid ----------------------------------------------------------- */
+
+.desk {
+	display: grid;
+	gap: var(--space-7);
+	align-items: start;
+}
+
+.desk__stream {
+	display: grid;
+	gap: var(--space-7);
+	min-width: 0;
+}
+
+.desk__rail {
+	min-width: 0;
+}
+
+/* --- Data tables --------------------------------------------------------- */
+
+.data {
+	overflow-x: auto;
+}
+
+.data table {
+	width: 100%;
+	border-collapse: collapse;
+}
+
+.data th {
+	padding: 0 var(--space-4) var(--space-2) 0;
+	border-bottom: 1px solid var(--rule-strong);
+	font-size: 12px;
+	font-weight: 500;
+	color: var(--ink-soft);
+	text-align: left;
+	white-space: nowrap;
+}
+
+.data td {
+	padding: 10px var(--space-4) 10px 0;
+	border-bottom: 1px solid var(--rule);
+	font-size: 13.5px;
+	color: var(--ink);
+	white-space: nowrap;
+	vertical-align: baseline;
+}
+
+.data tbody tr:last-child td {
+	border-bottom: none;
+}
+
+.data tbody tr:hover td {
+	background: var(--row-hover);
+}
+
+.data th:last-child,
+.data td:last-child {
+	padding-right: 0;
+}
+
+.data .num,
+.data td.num,
+.data th.num {
+	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
+	text-align: right;
+}
+
+td.pos,
+td.neg {
+	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
+	text-align: right;
+}
+
+td.pos {
+	color: var(--gain);
+}
+
+td.neg {
+	color: var(--loss);
+}
+
+.chip {
+	display: inline-block;
+	padding: 1px 6px;
+	border: 1px solid currentColor;
+	border-radius: var(--radius-chip);
+	font-family: var(--font-mono);
+	font-size: 11px;
+	font-weight: 500;
+	line-height: 1.5;
+}
+
+.chip--call,
+.chip--won {
+	color: var(--gain);
+}
+
+.chip--put,
+.chip--loss {
+	color: var(--loss);
+}
+
+.chip--flat {
+	color: var(--ink-soft);
+}
+
+/* Empty, error and info states explain what happened and what happens next. */
+.data .empty,
+.data .error,
+.data .info {
+	border-left: 2px solid var(--rule-strong);
+	padding: var(--space-2) 0 var(--space-2) var(--space-4);
+	font-size: 13.5px;
+	color: var(--ink-soft);
+	max-width: 62ch;
+}
+
+.data .empty p + p,
+.data .error p + p,
+.data .info p + p {
+	margin-top: var(--space-1);
+	font-size: 12.5px;
+	color: var(--ink-faint);
+}
+
+.data .error {
+	border-left-color: var(--loss);
+}
+
+.data .error p:first-child {
+	color: var(--loss);
+}
+
+.data .info {
+	border-left-color: var(--accent);
+}
+
+/* A failed read keeps the last known values on screen, dimmed and labelled,
+   so the operator can still read the positions while the desk retries. */
+.data[data-stale="true"] table,
+.readings[data-stale="true"],
+.limits[data-stale="true"] {
+	opacity: 0.5;
+}
+
+/* --- Risk rail: the exposure ladder is the one loud element -------------- */
+
+.ladder {
+	display: grid;
+	gap: var(--space-4);
+	padding-bottom: var(--space-5);
+	border-bottom: 1px solid var(--rule);
+}
+
+.ladder__caption {
+	font-size: 12.5px;
+	font-weight: 500;
+	color: var(--ink-soft);
+}
+
+.ladder__legs {
+	display: grid;
+	gap: var(--space-2);
+}
+
+.ladder__leg {
+	display: grid;
+	grid-template-columns: 1.5rem minmax(0, 1fr) auto;
+	align-items: center;
+	gap: var(--space-3);
+}
+
+.ladder__leg-index {
+	font-family: var(--font-mono);
+	font-size: 11.5px;
+	color: var(--ink-faint);
+}
+
+.ladder__rail {
+	position: relative;
+	height: 9px;
+	background: var(--panel-2);
+	border-left: 1px solid var(--rule-strong);
+}
+
+.ladder__fill {
+	display: block;
+	height: 100%;
+	min-width: 2px;
+	background: var(--accent);
+}
+
+/* A leg the bot would refuse before placing it. */
+.ladder__fill--over {
+	background: var(--loss);
+}
+
+.ladder__stake--over {
+	color: var(--loss);
+}
+
+.ladder__stake {
+	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
+	font-size: 12.5px;
+	color: var(--ink);
+}
+
+.ladder__leg--pending {
+	display: block;
+	font-size: 12.5px;
+	color: var(--ink-faint);
+}
+
+.ladder__totals {
+	display: grid;
+	gap: var(--space-2);
+	font-size: 12.5px;
+}
+
+.ladder__total {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: var(--space-4);
+}
+
+.ladder__total dt {
+	color: var(--ink-soft);
+}
+
+.ladder__total dd {
+	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
+	color: var(--ink);
+}
+
+.ladder__total--over dd {
+	color: var(--loss);
+}
+
+.ladder__warn {
+	font-size: 12px;
+	color: var(--loss);
+	max-width: 42ch;
+}
+
+.limits {
+	display: grid;
+	gap: var(--space-2);
+}
+
+.limit {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: var(--space-4);
+	font-size: 12.5px;
+	border-bottom: 1px solid var(--rule);
+	padding-bottom: var(--space-2);
+}
+
+.limit dt {
+	color: var(--ink-soft);
+}
+
+.limit dd {
+	color: var(--ink);
+}
+
+.limit:last-child {
+	border-bottom: none;
+}
+
+/* --- Buttons ------------------------------------------------------------- */
+
+.button {
+	padding: 9px 14px;
+	background: transparent;
+	border: 1px solid var(--rule-strong);
+	border-radius: var(--radius);
+	color: var(--ink);
+	font-family: var(--font-sans);
+	font-size: 13.5px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+}
+
+.button:hover {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
+.button--quiet {
+	border-color: transparent;
+	color: var(--ink-soft);
+}
+
+.button--quiet:hover {
+	border-color: var(--rule-strong);
+	color: var(--ink);
+}
+
+.region--risk .button {
+	width: 100%;
+}
+
+/* --- Modal: a settings sheet, not a popup -------------------------------- */
+
+.modal {
+	position: fixed;
+	inset: 0;
+	z-index: 30;
+	display: grid;
+	place-items: center;
+	padding: var(--space-5);
+	background: rgb(6 10 12 / 0.7);
+}
+
+[data-theme="light"] .modal {
+	background: rgb(20 27 32 / 0.45);
+}
+
+.modal__panel {
+	width: min(640px, 100%);
+	max-height: min(88vh, 860px);
+	overflow-y: auto;
+	padding: var(--space-6);
+	background: var(--panel);
+	border: 1px solid var(--rule-strong);
+	border-radius: 4px;
+}
+
+.modal__heading {
+	font-size: 20px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+}
+
+.modal__note {
+	margin-top: var(--space-2);
+	font-size: 12.5px;
+	color: var(--ink-soft);
+	max-width: 62ch;
+}
+
+#risk-form-element {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: var(--space-5) var(--space-6);
+	margin-top: var(--space-6);
+}
+
+.field {
+	display: grid;
+	gap: var(--space-2);
+	align-content: start;
+}
+
+.field label {
+	font-size: 12.5px;
+	font-weight: 500;
+	color: var(--ink);
+}
+
+.field input {
+	width: 100%;
+	padding: 9px 10px;
+	background: var(--panel-2);
+	border: 1px solid var(--rule-strong);
+	border-radius: var(--radius);
+	color: var(--ink);
+	font-family: var(--font-mono);
+	font-size: 14px;
+}
+
+.field input:focus-visible {
+	outline: none;
+	border-color: var(--focus);
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 32%, transparent);
+}
+
+.field__hint {
+	font-size: 12px;
+	color: var(--ink-faint);
+	max-width: 34ch;
+}
+
+.form-error {
+	grid-column: 1 / -1;
+	padding: var(--space-3);
+	background: color-mix(in srgb, var(--loss) 12%, transparent);
+	border: 1px solid color-mix(in srgb, var(--loss) 45%, transparent);
+	border-radius: var(--radius);
+	color: var(--loss);
+	font-size: 12.5px;
+}
+
+.modal__actions {
+	grid-column: 1 / -1;
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--space-3);
+	padding-top: var(--space-2);
+}
+
+/* Keep .hidden last in this section: it shares specificity with .modal. */
 .hidden {
-    display: none;
+	display: none;
 }
-button {
-    background-color: var(--primary-color);
-    color: white;
-    border: none;
-    padding: 10px 20px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 16px;
-    margin-top: 12px;
-    box-shadow: 0px 0px 9px var(--shadow-color);
+
+.form-error[hidden] {
+	display: none;
 }
-button:hover {
-    background-color: var(--secondary-color);
+
+/* --- Responsive ---------------------------------------------------------- */
+
+@media (min-width: 1100px) {
+	.desk {
+		grid-template-columns: minmax(0, 1fr) 358px;
+		column-gap: var(--space-8);
+	}
+
+	.region--risk {
+		gap: var(--space-5);
+	}
+}
+
+@media (max-width: 767px) {
+	:root {
+		--space-7: 28px;
+		--space-8: 36px;
+	}
+
+	.readings {
+		grid-template-columns: minmax(0, 1fr);
+		gap: var(--space-5);
+	}
+
+	.reading {
+		padding: 0;
+		border-left: none;
+	}
+
+	.reading + .reading {
+		border-top: 1px solid var(--rule);
+		padding-top: var(--space-4);
+	}
+
+	.reading--primary .reading__value {
+		font-size: 40px;
+	}
+}
+
+@media (max-width: 559px) {
+	.masthead__tools {
+		width: 100%;
+		justify-content: space-between;
+	}
+
+	#risk-form-element {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.modal__panel {
+		padding: var(--space-5);
+	}
+
+	.modal__actions {
+		justify-content: stretch;
+	}
+
+	.modal__actions .button {
+		flex: 1;
+	}
+}
+
+/* --- Motion preferences -------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+
+	.masthead::after {
+		animation: none;
+		transform: scaleX(1);
+	}
+
+	.status[data-state="live"].is-tick .status__dot {
+		animation: none;
+	}
+
+	.reading__value,
+	[data-flash].is-changed .reading__value,
+	.button,
+	.icon-button {
+		transition: none;
+	}
 }

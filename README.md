@@ -71,7 +71,7 @@ Both paths feed the same parser and the same trade coordinator.
 | `telegram_listener.py` | Optional direct Telegram channel listener (MTProto user session). |
 | `telegram_login.py` | One-time interactive login that creates the Telegram session file. |
 | `test.py` | Interactive helper that posts a synthetic signal to `POST /trade_signal`. |
-| `ui/` | Static dashboard (`index.html`, `script.js`, `styles.css`). |
+| `ui/` | Static dashboard (`index.html`, `script.js`, `styles.css`), plus `fonts/` (self-hosted Archivo and IBM Plex Mono, so the desk renders offline) and `favicon.svg`. |
 | `Macrodroid/MacroDroid.mdr` | MacroDroid export containing the macros, variables, and widgets. |
 | `Macrodroid/README.md` | MacroDroid import and configuration guide. |
 | `.env.example` | Configuration template. Copy to `.env`. |

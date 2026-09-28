@@ -1,89 +1,228 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 
 <head>
 	<meta charset="utf-8" />
 	<meta name="viewport" content="width=device-width,initial-scale=1" />
-	<title>Signal Bot UI</title>
+	<meta name="color-scheme" content="dark light" />
+	<meta name="theme-color" content="#0E1418" />
+	<title>Pocket Option Signal Bot</title>
+	<link rel="icon" href="/ui/favicon.svg" type="image/svg+xml" />
+	<link rel="preload" href="/ui/fonts/archivo-var-latin.woff2" as="font" type="font/woff2" crossorigin />
+	<link rel="preload" href="/ui/fonts/plex-mono-400-latin.woff2" as="font" type="font/woff2" crossorigin />
+	<script>
+		// Apply the stored theme before the first paint so the desk never
+		// flashes the wrong ground colour.
+		try {
+			var storedTheme = localStorage.getItem("signal-desk-theme");
+			if (storedTheme === "light" || storedTheme === "dark") {
+				document.documentElement.dataset.theme = storedTheme;
+			}
+		} catch (error) {
+			/* Private mode: keep the dark default. */
+		}
+	</script>
 	<link rel="stylesheet" href="/ui/styles.css" />
-	<!-- Placeholder favicon (inline SVG data URI) -->
-	<link rel="icon"
-		href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Crect%20width='100'%20height='100'%20fill='%23007acc'/%3E%3Ctext%20x='50'%20y='65'%20font-size='60'%20text-anchor='middle'%20fill='white'%20font-family='Arial'%3ES%3C/text%3E%3C/svg%3E" />
-
-
 </head>
 
 <body>
-	<header>
-		<h1>Signal Bot Dashboard</h1>
-		<button type="button">🌚</button>
+	<a class="skip-link" href="#main">Skip to the readings</a>
+
+	<header class="masthead">
+		<div class="masthead__brand">
+			<svg class="mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+				<rect x="2" y="13" width="5" height="9" />
+				<rect x="9.5" y="9" width="5" height="13" />
+				<rect x="17" y="2" width="5" height="20" />
+			</svg>
+			<h1 class="masthead__title">Pocket Option Signal Bot</h1>
+		</div>
+
+		<div class="masthead__tools">
+			<p class="status" id="connection-state" data-state="pending">
+				<span class="status__dot" aria-hidden="true"></span>
+				<span class="status__label" id="connection-state-label" aria-live="polite">Connecting</span>
+				<span class="status__time" id="last-updated" aria-hidden="true">no reading yet</span>
+			</p>
+			<button class="icon-button" id="theme-toggle" type="button" aria-pressed="false"
+				aria-label="Switch to the light theme">
+				<svg class="icon-button__moon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+					<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" />
+				</svg>
+				<svg class="icon-button__sun" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+					<circle cx="12" cy="12" r="4.4" />
+					<path
+						d="M12 1.8v3.1M12 19.1v3.1M1.8 12h3.1M19.1 12h3.1M4.8 4.8l2.2 2.2M17 17l2.2 2.2M19.2 4.8 17 7M7 17l-2.2 2.2" />
+				</svg>
+			</button>
+		</div>
 	</header>
-	<section id="account">
-		<h2 class="card-title"><span id="account-type">Demo</span> Account</h2>
-		<div class="card-horizontal" class="card">
-			<div class="card-display-text">Balance: <span id="balance-result">—</span></div>
-			<div class="card-display-text">Daily P/L: <span id="P_n_L_day-result">—</span></div>
-			<div class="card-display-text">Lifespan: <span id="lifespan-result">—</span></div>
-		</div>
 
-	</section>
-	<section id="open-trades">
-		<h2 class="card-title">Open Trades</h2>
-		<div id="open-trades-result" class="table-div">Loading...</div>
-	</section>
+	<main id="main">
+		<noscript>
+			<p class="notice">This desk reads live values from the bot, so it needs JavaScript. The trading bot
+				itself keeps running without it.</p>
+		</noscript>
 
-	<section id="current-signals">
-		<h2 class="card-title">Current Signals</h2>
-		<div id="current-signals-result" class="table-div">Loading...</div>
-	</section>
+		<section class="region region--account" aria-labelledby="account-heading">
+			<h2 class="region__heading" id="account-heading">Account</h2>
+			<p class="region__meta"><span id="account-type">Demo</span> account</p>
+			<dl class="readings">
+				<div class="reading reading--primary" data-flash>
+					<dt class="reading__label">Balance</dt>
+					<dd class="reading__value" id="balance-result">&mdash;</dd>
+				</div>
+				<div class="reading" data-flash>
+					<dt class="reading__label">Today&rsquo;s P/L</dt>
+					<dd class="reading__value" id="P_n_L_day-result">&mdash;</dd>
+				</div>
+				<div class="reading" data-flash>
+					<dt class="reading__label">Lifespan</dt>
+					<dd class="reading__value" id="lifespan-result">&mdash;</dd>
+				</div>
+			</dl>
+		</section>
 
-	<section id="closed-trades">
-		<h2 class="card-title">Closed Trades</h2>
-		<div id="closed-trades-result" class="table-div">Loading...</div>
-	</section>
+		<div class="desk">
+			<div class="desk__stream">
+				<section class="region" aria-labelledby="signals-heading">
+					<h2 class="region__heading" id="signals-heading">Incoming signals</h2>
+					<div id="current-signals-result" class="data">Loading&hellip;</div>
+				</section>
 
-	<section id="risk">
-		<h2 class="card-title">Risk Management</h2>
-		<div class="card-horizontal" id="risk-result">
-			<div class="card-display-text">Initial amount: <span id="initial_amount-risk-result">—</span></div>
-			<div class="card-display-text">martingale level: <span id="martingale_levels-risk-result">—</span></div>
-			<div class="card-display-text">martingale multiplier: <span id="martingale_multiplier-risk-result">—</span>
+				<section class="region" aria-labelledby="open-heading">
+					<h2 class="region__heading" id="open-heading">Open trades</h2>
+					<div id="open-trades-result" class="data">Loading&hellip;</div>
+				</section>
 			</div>
-			<div class="card-display-text">timeframe: <span id="timeframe-risk-result">—</span></div>
-			<div class="card-display-text">timezone: <span id="local_timezone-risk-result">—</span></div>
-			<div class="card-display-text">drawback threshold: <span id="drawback_threshold-risk-result">—</span></div>
+
+			<aside class="desk__rail">
+				<section class="region region--risk" aria-labelledby="risk-heading">
+					<h2 class="region__heading" id="risk-heading">Risk limits</h2>
+
+					<div class="ladder" id="risk-ladder">
+						<p class="ladder__caption">Worst case for one sequence</p>
+						<ol class="ladder__legs" id="ladder-legs">
+							<li class="ladder__leg ladder__leg--pending">Reading the limits&hellip;</li>
+						</ol>
+						<dl class="ladder__totals" id="ladder-totals"></dl>
+					</div>
+
+					<div class="data" id="risk-limits-state"></div>
+
+					<dl class="limits" id="risk-result">
+						<div class="limit">
+							<dt>Halt floor</dt>
+							<dd class="num" id="drawback_threshold-risk-result">&mdash;</dd>
+						</div>
+						<div class="limit">
+							<dt>Max trade amount</dt>
+							<dd class="num" id="max_trade_amount-risk-result">&mdash;</dd>
+						</div>
+						<div class="limit">
+							<dt>Exposure ceiling</dt>
+							<dd class="num" id="max_sequence_exposure-risk-result">&mdash;</dd>
+						</div>
+						<div class="limit">
+							<dt>Concurrent sequences</dt>
+							<dd class="num" id="max_open_trades-risk-result">&mdash;</dd>
+						</div>
+						<div class="limit">
+							<dt>Same asset</dt>
+							<dd class="num" id="max_open_trades_per_asset-risk-result">&mdash;</dd>
+						</div>
+						<div class="limit">
+							<dt>Same provider</dt>
+							<dd class="num" id="max_open_trades_per_provider-risk-result">&mdash;</dd>
+						</div>
+						<div class="limit">
+							<dt>Balance reserve</dt>
+							<dd class="num" id="min_balance_reserve-risk-result">&mdash;</dd>
+						</div>
+						<div class="limit">
+							<dt>Trade duration</dt>
+							<dd class="num" id="timeframe-risk-result">&mdash;</dd>
+						</div>
+						<div class="limit">
+							<dt>Timezone</dt>
+							<dd class="num" id="local_timezone-risk-result">&mdash;</dd>
+						</div>
+					</dl>
+
+					<button class="button" id="set-risk-button" type="button">Set risk limits</button>
+					<p class="region__note">Every limit is re-checked before an order, including each recovery
+						leg.</p>
+				</section>
+			</aside>
 		</div>
-		<button id="set-risk-button" type="button" onclick=showriskform()>Set Risk Management</button>
-	</section>
-	<div id="popup_bg" class="popup_bg hidden">
 
-		<div id="risk_form">
-			<h2 class="card-title">Set Risk Management</h2>
+		<section class="region" aria-labelledby="closed-heading">
+			<h2 class="region__heading" id="closed-heading">Closed trades</h2>
+			<p class="region__note">Newest settlement first. The bot keeps the most recent ten.</p>
+			<div id="closed-trades-result" class="data">Loading&hellip;</div>
+		</section>
+	</main>
+
+	<div id="popup_bg" class="modal hidden">
+		<div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="risk-form-heading">
+			<h2 class="modal__heading" id="risk-form-heading">Set risk limits</h2>
+			<p class="modal__note">Saved limits apply from the next order onward, including the recovery legs of a
+				sequence already running.</p>
+
 			<form id="risk-form-element">
-				<label for="initial_amount-input">Initial amount:</label>
-				<input type="number" step="2" id="initial_amount-input" name="initial_amount" required />
+				<p class="form-error" id="risk-form-error" role="alert" hidden></p>
 
-				<label for="martingale_level-input">Martingale levels:</label>
-				<input type="number" step="1" id="martingale_level-input" name="martingale_levels" required />
+				<div class="field">
+					<label for="initial_amount-input">Initial amount</label>
+					<input type="number" inputmode="decimal" min="0.01" step="any" id="initial_amount-input"
+						name="initial_amount" required />
+					<p class="field__hint">The first stake of every sequence.</p>
+				</div>
 
-				<label for="martingale_multiplier-input">Martingale multiplier:</label>
-				<input type="number" step="1" id="martingale_multiplier-input" name="martingale_multiplier"
-					required />
+				<div class="field">
+					<label for="martingale_levels-input">Martingale levels</label>
+					<input type="number" inputmode="numeric" min="0" step="1" id="martingale_levels-input"
+						name="martingale_levels" required />
+					<p class="field__hint">Recovery legs allowed after a loss. Zero ends the sequence instead.</p>
+				</div>
 
-				<label for="timeframe-input">Timeframe:</label>
-				<input type="number" step="10" id="timeframe-input" name="timeframe" required />
+				<div class="field">
+					<label for="martingale_multiplier-input">Martingale multiplier</label>
+					<input type="number" inputmode="decimal" min="1" step="any" id="martingale_multiplier-input"
+						name="martingale_multiplier" required />
+					<p class="field__hint">Each leg stakes this many times the leg before it.</p>
+				</div>
 
-				<label for="local_timezone-input">Timezone:</label>
-				<input type="text" id="local_timezone-input" name="local_timezone" required />
+				<div class="field">
+					<label for="timeframe-input">Trade duration (seconds)</label>
+					<input type="number" inputmode="numeric" min="1" step="any" id="timeframe-input" name="timeframe"
+						required />
+					<p class="field__hint">How long each trade stays open.</p>
+				</div>
 
-				<label for="drawback_threshold-input">Drawback threshold:</label>
-				<input type="number" step="1" id="drawback_threshold-input" name="drawback_threshold" required />
+				<div class="field">
+					<label for="local_timezone-input">Timezone offset from UTC</label>
+					<input type="text" id="local_timezone-input" name="local_timezone" placeholder="+2"
+						pattern="(\+|-)([0-9]|1[0-4])" required />
+					<p class="field__hint">Write it as <span class="mono">+2</span> or
+						<span class="mono">-3</span>, in whole hours from 0 to 14.</p>
+				</div>
 
-				<button type="button" onclick="setRiskData(form)">Submit</button>
-				<button type="button" id="cancel-risk-button" onclick=showriskform()>Cancel</button>
+				<div class="field">
+					<label for="drawback_threshold-input">Drawback threshold</label>
+					<input type="number" inputmode="decimal" min="1" step="1" id="drawback_threshold-input"
+						name="drawback_threshold" required />
+					<p class="field__hint">Halt the bot once today&rsquo;s P/L falls this far below zero.</p>
+				</div>
+
+				<div class="modal__actions">
+					<button class="button button--quiet" type="button" id="cancel-risk-button">Cancel</button>
+					<button class="button" type="submit">Save limits</button>
+				</div>
 			</form>
 		</div>
 	</div>
+
 	<script src="/ui/script.js" defer></script>
 </body>
 
