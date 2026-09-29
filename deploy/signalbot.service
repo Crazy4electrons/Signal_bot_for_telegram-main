@@ -1,0 +1,17 @@
+[Unit]
+Description=Pocket Option signal bot (user service)
+Documentation=file:%h/Documents/git-projects/Signal_bot_for_telegram-main/README.md
+
+[Service]
+Type=exec
+WorkingDirectory=%h/Documents/git-projects/Signal_bot_for_telegram-main
+ExecStart=%h/Documents/git-projects/Signal_bot_for_telegram-main/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 9634
+Restart=always
+RestartSec=5
+# Make log lines reach the journal as they are written instead of being buffered.
+Environment=PYTHONUNBUFFERED=1
+# The app must never block waiting for input, otherwise restarts hang.
+StandardInput=null
+
+[Install]
+WantedBy=default.target

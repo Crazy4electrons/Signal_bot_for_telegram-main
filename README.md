@@ -240,6 +240,44 @@ journalctl -u ngrok -f              # follow tunnel logs
 sudo systemctl restart signalbot    # restart the app
 ```
 
+### Linux (systemd --user, no sudo)
+
+If you do not want to install anything system-wide, use per-user services. Ready-made units live in
+[`deploy/`](deploy):
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/signalbot.service deploy/ngrok.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now signalbot.service ngrok.service
+systemctl --user status signalbot ngrok
+```
+
+Logs and restarts:
+
+```bash
+journalctl --user -u signalbot -f     # follow app logs
+journalctl --user -u ngrok -f         # follow tunnel logs
+systemctl --user restart signalbot    # restart the app
+systemctl --user stop signalbot ngrok # stop both
+```
+
+By default user services stop when your last login session ends. To keep them running after logout
+and to start them at boot without logging in:
+
+```bash
+sudo loginctl enable-linger $USER
+```
+
+Notes:
+
+- Stop the copies you started by hand first. The dev domain allows one agent session at a time, so a
+  second ngrok fails with `ERR_NGROK_334 (endpoint already online)`.
+- The ngrok unit has no `Environment=NGROK_AUTHTOKEN=...` line; it reads the token from
+  `~/.config/ngrok/ngrok.yml` (set it with `ngrok config add-authtoken ...`).
+- Do not use the system units above and the user units at the same time - they fight over port
+  `9634` and over the tunnel.
+
 ### Windows
 
 `uvicorn` and `ngrok` are both console applications, so use a service wrapper. Two common options:

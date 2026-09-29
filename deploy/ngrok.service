@@ -1,0 +1,15 @@
+[Unit]
+Description=ngrok tunnel for the signal bot (user service)
+After=signalbot.service
+Wants=signalbot.service
+
+[Service]
+Type=exec
+# The authtoken lives in ~/.config/ngrok/ngrok.yml.
+ExecStart=/usr/bin/ngrok http 9634 --url https://nonstimulating-unalarmingly-rosamond.ngrok-free.dev --log stdout
+Restart=always
+RestartSec=5
+StandardInput=null
+
+[Install]
+WantedBy=default.target
