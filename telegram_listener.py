@@ -95,8 +95,11 @@ class TelegramSignalListener:
             raise RuntimeError("Direct Telegram support requires the 'telethon' package")
 
         self.client = TelegramClient(self.session_path, self.api_id, self.api_hash)
+        chat_filter: str | int = self.channel
+        if self.channel.lstrip("-").isdigit():
+            chat_filter = int(self.channel)
 
-        @self.client.on(events.NewMessage(chats=self.channel))
+        @self.client.on(events.NewMessage(chats=chat_filter))
         async def handle_message(event: Any) -> None:
             message_id = int(event.message.id)
             if not self._claim_message(message_id):
