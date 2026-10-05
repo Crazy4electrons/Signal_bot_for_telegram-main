@@ -138,6 +138,7 @@
       "_callable_class": true,
       "_origin": "ast",
       "community": 5,
+      "community_name": "Telegram Signal Listener",
       "file_type": "code",
       "norm_label": "telegramsignallistener",
       "source_file": "telegram_listener.py",
@@ -979,6 +980,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 5,
+      "community_name": "Telegram Signal Listener",
       "file_type": "code",
       "norm_label": "._claim_message()",
       "source_file": "telegram_listener.py",
@@ -990,6 +992,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 5,
+      "community_name": "Telegram Signal Listener",
       "file_type": "code",
       "norm_label": ".from_environment()",
       "source_file": "telegram_listener.py",
@@ -1001,6 +1004,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 5,
+      "community_name": "Telegram Signal Listener",
       "file_type": "code",
       "norm_label": ".__init__()",
       "source_file": "telegram_listener.py",
@@ -1012,6 +1016,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 5,
+      "community_name": "Telegram Signal Listener",
       "file_type": "code",
       "norm_label": "._initialize_state()",
       "source_file": "telegram_listener.py",
@@ -1023,6 +1028,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 5,
+      "community_name": "Telegram Signal Listener",
       "file_type": "code",
       "norm_label": ".run()",
       "source_file": "telegram_listener.py",
@@ -1034,10 +1040,11 @@
       "_callable": true,
       "_origin": "ast",
       "community": 5,
+      "community_name": "Telegram Signal Listener",
       "file_type": "code",
       "norm_label": "handle_message()",
       "source_file": "telegram_listener.py",
-      "source_location": "L103"
+      "source_location": "L100"
     },
     {
       "id": "telegram_listener_telegramsignallistener_stop",
@@ -1045,10 +1052,11 @@
       "_callable": true,
       "_origin": "ast",
       "community": 5,
+      "community_name": "Telegram Signal Listener",
       "file_type": "code",
       "norm_label": ".stop()",
       "source_file": "telegram_listener.py",
-      "source_location": "L126"
+      "source_location": "L123"
     },
     {
       "id": "main_active_sequences",
@@ -1424,6 +1432,17 @@
       "source_location": "L1"
     },
     {
+      "id": "telegram_listener",
+      "label": "telegram_listener.py",
+      "_origin": "ast",
+      "community": 2,
+      "community_name": "Scraper & Ingest Imports",
+      "file_type": "code",
+      "norm_label": "telegram_listener.py",
+      "source_file": "telegram_listener.py",
+      "source_location": "L1"
+    },
+    {
       "id": "telegram_login",
       "label": "telegram_login.py",
       "_origin": "ast",
@@ -1454,6 +1473,17 @@
       "file_type": "rationale",
       "norm_label": "capture a pocket option session with a headed persistent edge profile. the...",
       "source_file": "playwright_scraper.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "telegram_listener_rationale_1",
+      "label": "Direct Telegram channel ingestion for the signal bot. The listener uses a\u2026",
+      "_origin": "ast",
+      "community": 2,
+      "community_name": "Scraper & Ingest Imports",
+      "file_type": "rationale",
+      "norm_label": "direct telegram channel ingestion for the signal bot. the listener uses a...",
+      "source_file": "telegram_listener.py",
       "source_location": "L1"
     },
     {
@@ -1510,26 +1540,6 @@
       "norm_label": "prompts user for signal details, constructs notification, and sends it.",
       "source_file": "test.py",
       "source_location": "L83"
-    },
-    {
-      "id": "telegram_listener",
-      "label": "telegram_listener.py",
-      "_origin": "ast",
-      "community": 2,
-      "file_type": "code",
-      "norm_label": "telegram_listener.py",
-      "source_file": "telegram_listener.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "telegram_listener_rationale_1",
-      "label": "Direct Telegram channel ingestion for the signal bot. The listener uses a\u2026",
-      "_origin": "ast",
-      "community": 2,
-      "file_type": "rationale",
-      "norm_label": "direct telegram channel ingestion for the signal bot. the listener uses a...",
-      "source_file": "telegram_listener.py",
-      "source_location": "L1"
     },
     {
       "id": "get",
@@ -1635,6 +1645,7 @@
       "label": "Read new posts from one configured Telegram channel.",
       "_origin": "ast",
       "community": 5,
+      "community_name": "Telegram Signal Listener",
       "file_type": "rationale",
       "norm_label": "read new posts from one configured telegram channel.",
       "source_file": "telegram_listener.py",
@@ -1645,6 +1656,7 @@
       "label": "Build a listener only when direct Telegram ingestion is enabled.",
       "_origin": "ast",
       "community": 5,
+      "community_name": "Telegram Signal Listener",
       "file_type": "rationale",
       "norm_label": "build a listener only when direct telegram ingestion is enabled.",
       "source_file": "telegram_listener.py",
@@ -1655,6 +1667,7 @@
       "label": "Connect and process new posts until cancelled.",
       "_origin": "ast",
       "community": 5,
+      "community_name": "Telegram Signal Listener",
       "file_type": "rationale",
       "norm_label": "connect and process new posts until cancelled.",
       "source_file": "telegram_listener.py",
@@ -1806,7 +1819,6 @@
     {
       "id": "requirements_aiohttp",
       "label": "aiohttp",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -1821,7 +1833,6 @@
     {
       "id": "requirements_binaryoptionstoolsv2",
       "label": "binaryoptionstoolsv2",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -1836,7 +1847,6 @@
     {
       "id": "requirements_fastapi",
       "label": "fastapi",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -1851,7 +1861,6 @@
     {
       "id": "requirements_playwright",
       "label": "playwright",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -1866,7 +1875,6 @@
     {
       "id": "requirements_python_dotenv",
       "label": "python-dotenv",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -1881,7 +1889,6 @@
     {
       "id": "requirements_pytz",
       "label": "pytz",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -1896,7 +1903,6 @@
     {
       "id": "requirements_requests",
       "label": "requests",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -1911,7 +1917,6 @@
     {
       "id": "requirements_telethon",
       "label": "telethon",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -1926,7 +1931,6 @@
     {
       "id": "requirements_uvicorn",
       "label": "uvicorn",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -1941,7 +1945,6 @@
     {
       "id": "macrodroid_custom_widgets",
       "label": "MacroDroid Custom Widgets",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -1956,7 +1959,6 @@
     {
       "id": "macrodroid_http_request_action",
       "label": "HTTP Request Action",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -1971,7 +1973,6 @@
     {
       "id": "macrodroid_macro_droid",
       "label": "MacroDroid",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -1986,7 +1987,6 @@
     {
       "id": "macrodroid_mdr_export",
       "label": "MacroDroid.mdr Export File",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2001,7 +2001,6 @@
     {
       "id": "macrodroid_signal_provider",
       "label": "signal_provider Global Variable",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2016,7 +2015,6 @@
     {
       "id": "macrodroid_timezone_variable",
       "label": "timezone Global Variable",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2031,7 +2029,6 @@
     {
       "id": "macrodroid_tunnel_url",
       "label": "tunnel_url Global Variable",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2047,7 +2044,6 @@
     {
       "id": "macrodroid_webhook_secret",
       "label": "webhook_secret Global Variable",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2062,7 +2058,6 @@
     {
       "id": "readme_direct_telegram_listener",
       "label": "Direct Telegram Listener (MTProto User Session)",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2077,7 +2072,6 @@
     {
       "id": "readme_fastapi_app",
       "label": "FastAPI Application (main:app)",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2092,7 +2086,6 @@
     {
       "id": "readme_health_endpoint",
       "label": "GET /health Endpoint",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2107,7 +2100,6 @@
     {
       "id": "readme_http_endpoints",
       "label": "HTTP API Endpoints",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2122,7 +2114,6 @@
     {
       "id": "readme_macrodroid_webhook_ingestion",
       "label": "MacroDroid Webhook Ingestion Path",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2137,7 +2128,6 @@
     {
       "id": "readme_manage_martingale",
       "label": "manage_martingale",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2152,7 +2142,6 @@
     {
       "id": "readme_martingale",
       "label": "Martingale Recovery",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2167,7 +2156,6 @@
     {
       "id": "readme_parse_signal",
       "label": "parse_signal",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2182,7 +2170,6 @@
     {
       "id": "readme_playwright_scraper",
       "label": "playwright_scraper.py Session Capture",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2197,7 +2184,6 @@
     {
       "id": "readme_pocket_option_session",
       "label": "Pocket Option Session (ssid)",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2212,7 +2198,6 @@
     {
       "id": "readme_purge_stale_sequences",
       "label": "purge_stale_sequences",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2227,7 +2212,6 @@
     {
       "id": "readme_sqlite_state",
       "label": "SQLite State Store (Dedupe and Trade History)",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2242,7 +2226,6 @@
     {
       "id": "readme_systemd_service",
       "label": "systemd / NSSM Service Deployment",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2257,7 +2240,6 @@
     {
       "id": "readme_take_trade",
       "label": "take_trade",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2272,7 +2254,6 @@
     {
       "id": "ui_index_closed_trades_panel",
       "label": "Closed Trades Panel (Last 10)",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2287,7 +2268,6 @@
     {
       "id": "ui_index_connection_state",
       "label": "Connection State Indicator",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2302,7 +2282,6 @@
     {
       "id": "ui_index_current_signals_panel",
       "label": "Incoming Signals Panel",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2317,7 +2296,6 @@
     {
       "id": "ui_index_live_readings",
       "label": "Live Account Readings (Balance / P-L / Lifespan)",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2332,7 +2310,6 @@
     {
       "id": "ui_index_risk_form_element",
       "label": "Set Risk Limits Form",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2347,7 +2324,6 @@
     {
       "id": "ui_index_risk_ladder",
       "label": "Risk Ladder (Worst-Case Sequence Exposure)",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2362,7 +2338,6 @@
     {
       "id": "macrodroid_readme_guide",
       "label": "MacroDroid Setup Guide",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2377,7 +2352,6 @@
     {
       "id": "readme_pocket_option_signal_bot",
       "label": "Pocket Option Signal Bot",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2392,7 +2366,6 @@
     {
       "id": "ui_index_signal_desk",
       "label": "Signal Desk Dashboard Page",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2407,7 +2380,6 @@
     {
       "id": "ui_favicon_chart_mark",
       "label": "Three-Bar Amber Chart Mark Favicon",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2422,7 +2394,6 @@
     {
       "id": "macrodroid_pytz_inverted_offset",
       "label": "pytz Inverted Timezone Offset Convention",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2438,7 +2409,6 @@
     {
       "id": "readme_degraded_startup",
       "label": "Degraded Startup Without Blocking Input",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2454,7 +2424,6 @@
     {
       "id": "readme_martingale_strategy",
       "label": "Martingale Recovery Strategy",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2470,7 +2439,6 @@
     {
       "id": "readme_risk_controls",
       "label": "Risk Controls and Limits",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2486,7 +2454,6 @@
     {
       "id": "readme_stable_public_url",
       "label": "Stable Public Webhook URL Requirement",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2502,7 +2469,6 @@
     {
       "id": "readme_webhook_auth",
       "label": "Webhook Authentication (x-webhook-secret)",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2518,7 +2484,6 @@
     {
       "id": "readme_webhook_secret_rotation",
       "label": "Webhook Secret Rotation",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 0,
@@ -2534,7 +2499,6 @@
     {
       "id": "requirements_rich",
       "label": "rich",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 14,
@@ -2549,7 +2513,6 @@
     {
       "id": "ui_index_theme_toggle",
       "label": "Theme Toggle with Pre-Paint Theme Application",
-      "_origin": "semantic",
       "author": null,
       "captured_at": null,
       "community": 15,
@@ -2565,7 +2528,6 @@
     {
       "id": "argparse",
       "label": "argparse",
-      "_origin": "semantic",
       "community": 2,
       "community_name": "Scraper & Ingest Imports",
       "external": true,
@@ -2577,7 +2539,6 @@
     {
       "id": "asyncio",
       "label": "asyncio",
-      "_origin": "semantic",
       "community": 2,
       "community_name": "Scraper & Ingest Imports",
       "external": true,
@@ -2589,7 +2550,6 @@
     {
       "id": "collections_abc",
       "label": "collections_abc",
-      "_origin": "semantic",
       "community": 2,
       "community_name": "Scraper & Ingest Imports",
       "external": true,
@@ -2601,7 +2561,6 @@
     {
       "id": "datetime",
       "label": "datetime",
-      "_origin": "semantic",
       "community": 2,
       "community_name": "Scraper & Ingest Imports",
       "external": true,
@@ -2613,7 +2572,6 @@
     {
       "id": "dotenv",
       "label": "dotenv",
-      "_origin": "semantic",
       "community": 2,
       "community_name": "Scraper & Ingest Imports",
       "external": true,
@@ -2625,7 +2583,6 @@
     {
       "id": "json",
       "label": "json",
-      "_origin": "semantic",
       "community": 2,
       "community_name": "Scraper & Ingest Imports",
       "external": true,
@@ -2637,7 +2594,6 @@
     {
       "id": "os",
       "label": "os",
-      "_origin": "semantic",
       "community": 2,
       "community_name": "Scraper & Ingest Imports",
       "external": true,
@@ -2649,7 +2605,6 @@
     {
       "id": "pathlib",
       "label": "pathlib",
-      "_origin": "semantic",
       "community": 2,
       "community_name": "Scraper & Ingest Imports",
       "external": true,
@@ -2661,7 +2616,6 @@
     {
       "id": "playwright_async_api",
       "label": "playwright_async_api",
-      "_origin": "semantic",
       "community": 2,
       "community_name": "Scraper & Ingest Imports",
       "external": true,
@@ -2673,7 +2627,6 @@
     {
       "id": "requests",
       "label": "requests",
-      "_origin": "semantic",
       "community": 2,
       "community_name": "Scraper & Ingest Imports",
       "external": true,
@@ -2685,7 +2638,6 @@
     {
       "id": "shutil",
       "label": "shutil",
-      "_origin": "semantic",
       "community": 2,
       "community_name": "Scraper & Ingest Imports",
       "external": true,
@@ -2697,7 +2649,6 @@
     {
       "id": "sqlite3",
       "label": "sqlite3",
-      "_origin": "semantic",
       "community": 2,
       "community_name": "Scraper & Ingest Imports",
       "external": true,
@@ -2709,7 +2660,6 @@
     {
       "id": "telethon",
       "label": "telethon",
-      "_origin": "semantic",
       "community": 2,
       "community_name": "Scraper & Ingest Imports",
       "external": true,
@@ -2721,7 +2671,6 @@
     {
       "id": "time",
       "label": "time",
-      "_origin": "semantic",
       "community": 2,
       "community_name": "Scraper & Ingest Imports",
       "external": true,
@@ -2733,7 +2682,6 @@
     {
       "id": "typing",
       "label": "typing",
-      "_origin": "semantic",
       "community": 2,
       "community_name": "Scraper & Ingest Imports",
       "external": true,
@@ -2745,7 +2693,6 @@
     {
       "id": "binaryoptionstoolsv2_pocketoption",
       "label": "binaryoptionstoolsv2_pocketoption",
-      "_origin": "semantic",
       "community": 3,
       "community_name": "FastAPI Web App",
       "external": true,
@@ -2757,7 +2704,6 @@
     {
       "id": "contextlib",
       "label": "contextlib",
-      "_origin": "semantic",
       "community": 3,
       "community_name": "FastAPI Web App",
       "external": true,
@@ -2769,7 +2715,6 @@
     {
       "id": "fastapi_middleware_cors",
       "label": "fastapi_middleware_cors",
-      "_origin": "semantic",
       "community": 3,
       "community_name": "FastAPI Web App",
       "external": true,
@@ -2781,7 +2726,6 @@
     {
       "id": "fastapi_responses",
       "label": "fastapi_responses",
-      "_origin": "semantic",
       "community": 3,
       "community_name": "FastAPI Web App",
       "external": true,
@@ -2793,7 +2737,6 @@
     {
       "id": "fastapi_staticfiles",
       "label": "fastapi_staticfiles",
-      "_origin": "semantic",
       "community": 3,
       "community_name": "FastAPI Web App",
       "external": true,
@@ -2805,7 +2748,6 @@
     {
       "id": "pydantic",
       "label": "pydantic",
-      "_origin": "semantic",
       "community": 3,
       "community_name": "FastAPI Web App",
       "external": true,
@@ -2817,7 +2759,6 @@
     {
       "id": "pytz",
       "label": "pytz",
-      "_origin": "semantic",
       "community": 3,
       "community_name": "FastAPI Web App",
       "external": true,
@@ -2829,7 +2770,6 @@
     {
       "id": "random",
       "label": "random",
-      "_origin": "semantic",
       "community": 3,
       "community_name": "FastAPI Web App",
       "external": true,
@@ -2841,7 +2781,6 @@
     {
       "id": "rich_logging",
       "label": "rich_logging",
-      "_origin": "semantic",
       "community": 3,
       "community_name": "FastAPI Web App",
       "external": true,
@@ -2853,7 +2792,6 @@
     {
       "id": "secrets",
       "label": "secrets",
-      "_origin": "semantic",
       "community": 3,
       "community_name": "FastAPI Web App",
       "external": true,
@@ -2865,7 +2803,6 @@
     {
       "id": "starlette_middleware_base",
       "label": "starlette_middleware_base",
-      "_origin": "semantic",
       "community": 3,
       "community_name": "FastAPI Web App",
       "external": true,
@@ -2877,7 +2814,6 @@
     {
       "id": "starlette_requests",
       "label": "starlette_requests",
-      "_origin": "semantic",
       "community": 3,
       "community_name": "FastAPI Web App",
       "external": true,
@@ -2889,7 +2825,6 @@
     {
       "id": "starlette_responses",
       "label": "starlette_responses",
-      "_origin": "semantic",
       "community": 3,
       "community_name": "FastAPI Web App",
       "external": true,
@@ -2901,7 +2836,6 @@
     {
       "id": "logging",
       "label": "logging",
-      "_origin": "semantic",
       "community": 7,
       "community_name": "Signal Parsing",
       "external": true,
@@ -2913,7 +2847,6 @@
     {
       "id": "re",
       "label": "re",
-      "_origin": "semantic",
       "community": 7,
       "community_name": "Signal Parsing",
       "external": true,
@@ -3401,7 +3334,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "telegram_listener.py",
-      "source_location": "L105",
+      "source_location": "L102",
       "weight": 1.0
     },
     {
@@ -5729,7 +5662,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "telegram_listener.py",
-      "source_location": "L103",
+      "source_location": "L100",
       "weight": 1.0
     },
     {
@@ -6356,7 +6289,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "telegram_listener.py",
-      "source_location": "L126",
+      "source_location": "L123",
       "weight": 1.0
     },
     {
@@ -6753,7 +6686,6 @@
       "source": "macrodroid_pytz_inverted_offset",
       "target": "macrodroid_timezone_variable",
       "relation": "conceptually_related_to",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Macrodroid/README.md",
@@ -6764,7 +6696,6 @@
       "source": "readme_macrodroid_webhook_ingestion",
       "target": "readme_direct_telegram_listener",
       "relation": "conceptually_related_to",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "README.md",
@@ -6775,7 +6706,6 @@
       "source": "readme_martingale_strategy",
       "target": "readme_martingale",
       "relation": "conceptually_related_to",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "README.md",
@@ -6786,7 +6716,6 @@
       "source": "readme_purge_stale_sequences",
       "target": "readme_risk_controls",
       "relation": "implements",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "README.md",
@@ -6797,7 +6726,6 @@
       "source": "readme_degraded_startup",
       "target": "readme_fastapi_app",
       "relation": "rationale_for",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "README.md",
@@ -6808,7 +6736,6 @@
       "source": "readme_stable_public_url",
       "target": "readme_macrodroid_webhook_ingestion",
       "relation": "rationale_for",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "README.md",
@@ -6819,7 +6746,6 @@
       "source": "readme_webhook_auth",
       "target": "readme_fastapi_app",
       "relation": "rationale_for",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "README.md",
@@ -6830,7 +6756,6 @@
       "source": "readme_webhook_secret_rotation",
       "target": "readme_webhook_auth",
       "relation": "rationale_for",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "README.md",
@@ -6841,7 +6766,6 @@
       "source": "macrodroid_http_request_action",
       "target": "macrodroid_tunnel_url",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Macrodroid/README.md",
@@ -6852,7 +6776,6 @@
       "source": "macrodroid_http_request_action",
       "target": "macrodroid_webhook_secret",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Macrodroid/README.md",
@@ -6863,7 +6786,6 @@
       "source": "macrodroid_readme_guide",
       "target": "macrodroid_macro_droid",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Macrodroid/README.md",
@@ -6874,7 +6796,6 @@
       "source": "macrodroid_readme_guide",
       "target": "macrodroid_mdr_export",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Macrodroid/README.md",
@@ -6885,7 +6806,6 @@
       "source": "macrodroid_readme_guide",
       "target": "readme_health_endpoint",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Macrodroid/README.md",
@@ -6896,7 +6816,6 @@
       "source": "macrodroid_readme_guide",
       "target": "readme_pocket_option_signal_bot",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Macrodroid/README.md",
@@ -6907,7 +6826,6 @@
       "source": "macrodroid_tunnel_url",
       "target": "readme_stable_public_url",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Macrodroid/README.md",
@@ -6918,7 +6836,6 @@
       "source": "macrodroid_webhook_secret",
       "target": "readme_webhook_auth",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Macrodroid/README.md",
@@ -6929,7 +6846,6 @@
       "source": "readme_direct_telegram_listener",
       "target": "readme_parse_signal",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "README.md",
@@ -6940,7 +6856,6 @@
       "source": "readme_fastapi_app",
       "target": "readme_parse_signal",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "README.md",
@@ -6951,7 +6866,6 @@
       "source": "readme_health_endpoint",
       "target": "readme_fastapi_app",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "README.md",
@@ -6962,7 +6876,6 @@
       "source": "readme_http_endpoints",
       "target": "readme_health_endpoint",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "README.md",
@@ -6973,7 +6886,6 @@
       "source": "readme_macrodroid_webhook_ingestion",
       "target": "readme_parse_signal",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "README.md",
@@ -6984,7 +6896,6 @@
       "source": "readme_manage_martingale",
       "target": "readme_martingale_strategy",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "README.md",
@@ -6995,7 +6906,6 @@
       "source": "readme_manage_martingale",
       "target": "readme_risk_controls",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "README.md",
@@ -7006,7 +6916,6 @@
       "source": "readme_parse_signal",
       "target": "readme_take_trade",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "README.md",
@@ -7017,7 +6926,6 @@
       "source": "readme_playwright_scraper",
       "target": "readme_pocket_option_session",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "README.md",
@@ -7028,7 +6936,6 @@
       "source": "readme_pocket_option_signal_bot",
       "target": "readme_fastapi_app",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "README.md",
@@ -7039,7 +6946,6 @@
       "source": "readme_systemd_service",
       "target": "readme_fastapi_app",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "README.md",
@@ -7050,7 +6956,6 @@
       "source": "readme_take_trade",
       "target": "readme_manage_martingale",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "README.md",
@@ -7061,7 +6966,6 @@
       "source": "readme_pocket_option_session",
       "target": "readme_fastapi_app",
       "relation": "shares_data_with",
-      "_origin": "semantic",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "README.md",
@@ -7072,7 +6976,6 @@
       "source": "requirements_aiohttp",
       "target": "readme_direct_telegram_listener",
       "relation": "conceptually_related_to",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.65,
       "source_file": "requirements.txt",
@@ -7083,7 +6986,6 @@
       "source": "requirements_python_dotenv",
       "target": "readme_fastapi_app",
       "relation": "conceptually_related_to",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.65,
       "source_file": "requirements.txt",
@@ -7094,7 +6996,6 @@
       "source": "requirements_requests",
       "target": "readme_http_endpoints",
       "relation": "conceptually_related_to",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.65,
       "source_file": "requirements.txt",
@@ -7105,7 +7006,6 @@
       "source": "ui_favicon_chart_mark",
       "target": "readme_pocket_option_signal_bot",
       "relation": "conceptually_related_to",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.65,
       "source_file": "ui/favicon.svg",
@@ -7116,7 +7016,6 @@
       "source": "macrodroid_custom_widgets",
       "target": "readme_health_endpoint",
       "relation": "conceptually_related_to",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.75,
       "source_file": "Macrodroid/README.md",
@@ -7127,7 +7026,6 @@
       "source": "requirements_binaryoptionstoolsv2",
       "target": "readme_pocket_option_session",
       "relation": "conceptually_related_to",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.75,
       "source_file": "requirements.txt",
@@ -7138,7 +7036,6 @@
       "source": "requirements_pytz",
       "target": "readme_parse_signal",
       "relation": "conceptually_related_to",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.75,
       "source_file": "requirements.txt",
@@ -7149,7 +7046,6 @@
       "source": "ui_index_risk_form_element",
       "target": "readme_degraded_startup",
       "relation": "conceptually_related_to",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.75,
       "source_file": "ui/index.html",
@@ -7160,7 +7056,6 @@
       "source": "macrodroid_signal_provider",
       "target": "readme_parse_signal",
       "relation": "conceptually_related_to",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.85,
       "source_file": "Macrodroid/README.md",
@@ -7171,7 +7066,6 @@
       "source": "macrodroid_timezone_variable",
       "target": "readme_parse_signal",
       "relation": "conceptually_related_to",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.85,
       "source_file": "Macrodroid/README.md",
@@ -7182,7 +7076,6 @@
       "source": "readme_martingale",
       "target": "readme_risk_controls",
       "relation": "conceptually_related_to",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.85,
       "source_file": "README.md",
@@ -7193,7 +7086,6 @@
       "source": "requirements_pytz",
       "target": "macrodroid_pytz_inverted_offset",
       "relation": "conceptually_related_to",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.85,
       "source_file": "requirements.txt",
@@ -7204,7 +7096,6 @@
       "source": "macrodroid_custom_widgets",
       "target": "ui_index_signal_desk",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.85,
       "source_file": "Macrodroid/README.md",
@@ -7215,7 +7106,6 @@
       "source": "requirements_binaryoptionstoolsv2",
       "target": "readme_take_trade",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.85,
       "source_file": "requirements.txt",
@@ -7226,7 +7116,6 @@
       "source": "ui_index_closed_trades_panel",
       "target": "readme_http_endpoints",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.85,
       "source_file": "ui/index.html",
@@ -7237,7 +7126,6 @@
       "source": "ui_index_connection_state",
       "target": "readme_health_endpoint",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.85,
       "source_file": "ui/index.html",
@@ -7248,7 +7136,6 @@
       "source": "ui_index_live_readings",
       "target": "readme_http_endpoints",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.85,
       "source_file": "ui/index.html",
@@ -7259,7 +7146,6 @@
       "source": "ui_favicon_chart_mark",
       "target": "ui_index_signal_desk",
       "relation": "semantically_similar_to",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.85,
       "source_file": "ui/favicon.svg",
@@ -7270,7 +7156,6 @@
       "source": "readme_pocket_option_session",
       "target": "readme_take_trade",
       "relation": "shares_data_with",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.85,
       "source_file": "README.md",
@@ -7281,7 +7166,6 @@
       "source": "ui_index_current_signals_panel",
       "target": "readme_parse_signal",
       "relation": "shares_data_with",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.85,
       "source_file": "ui/index.html",
@@ -7292,7 +7176,6 @@
       "source": "ui_index_risk_ladder",
       "target": "readme_martingale_strategy",
       "relation": "shares_data_with",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.85,
       "source_file": "ui/index.html",
@@ -7303,7 +7186,6 @@
       "source": "macrodroid_macro_droid",
       "target": "readme_macrodroid_webhook_ingestion",
       "relation": "conceptually_related_to",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.95,
       "source_file": "Macrodroid/README.md",
@@ -7314,7 +7196,6 @@
       "source": "ui_index_signal_desk",
       "target": "readme_pocket_option_signal_bot",
       "relation": "conceptually_related_to",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.95,
       "source_file": "ui/index.html",
@@ -7325,7 +7206,6 @@
       "source": "readme_http_endpoints",
       "target": "readme_fastapi_app",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.95,
       "source_file": "README.md",
@@ -7336,7 +7216,6 @@
       "source": "requirements_fastapi",
       "target": "readme_fastapi_app",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.95,
       "source_file": "requirements.txt",
@@ -7347,7 +7226,6 @@
       "source": "requirements_playwright",
       "target": "readme_playwright_scraper",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.95,
       "source_file": "requirements.txt",
@@ -7358,7 +7236,6 @@
       "source": "requirements_telethon",
       "target": "readme_direct_telegram_listener",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.95,
       "source_file": "requirements.txt",
@@ -7369,7 +7246,6 @@
       "source": "requirements_uvicorn",
       "target": "readme_fastapi_app",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.95,
       "source_file": "requirements.txt",
@@ -7380,7 +7256,6 @@
       "source": "ui_index_risk_form_element",
       "target": "readme_risk_controls",
       "relation": "references",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.95,
       "source_file": "ui/index.html",
@@ -7391,7 +7266,6 @@
       "source": "readme_sqlite_state",
       "target": "readme_parse_signal",
       "relation": "shares_data_with",
-      "_origin": "semantic",
       "confidence": "INFERRED",
       "confidence_score": 0.95,
       "source_file": "README.md",
@@ -7448,5 +7322,5 @@
       "source_file": "README.md"
     }
   ],
-  "built_at_commit": "4c9b3414ac456734d25fa941efd262be174a7d6b"
+  "built_at_commit": "abca4dfa6590f422b1f24107cb726245b509bc28"
 }

@@ -68,8 +68,9 @@ Both paths feed the same parser and the same trade coordinator.
 | `main.py` | FastAPI app: lifecycle, endpoints, signal validation, trade lifecycle, martingale, risk limits, webhook auth. |
 | `parse_data.py` | Parses the signal text shared by MacroDroid and Telegram. Normalises `BUY`/`CALL` to `CALL` and `SELL`/`PUT` to `PUT`. |
 | `playwright_scraper.py` | Captures the Pocket Option session (`ssid`) by attaching to a headed Edge profile. Run once, refresh when the session expires. |
-| `telegram_listener.py` | Optional direct Telegram channel listener (MTProto user session). |
-| `telegram_login.py` | One-time interactive login that creates the Telegram session file. |
+| `telegram_listener.py` | Optional direct Telegram channel listener (MTProto user session). Reads every channel in `channels.json`. |
+| `telegram_login.py` | Interactive login that creates the Telegram session file. Also called automatically by `fetch_channels.py`. |
+| `fetch_channels.py` | Lists the channels the account can read and can append them to `channels.json`. |
 | `test.py` | Interactive helper that posts a synthetic signal to `POST /trade_signal`. |
 | `ui/` | Static dashboard (`index.html`, `script.js`, `styles.css`), plus `fonts/` (self-hosted Archivo and IBM Plex Mono, so the desk renders offline) and `favicon.svg`. |
 | `Macrodroid/MacroDroid.mdr` | MacroDroid export containing the macros, variables, and widgets. |
@@ -115,7 +116,9 @@ pip install -r requirements.txt
 
 ## Configuration
 
-All settings live in `.env`. Never commit this file; it holds your broker session.
+Application settings live in `.env`. Never commit that file; it holds your broker session.
+Channel IDs and per-channel timezones live in `channels.json` instead, so the same list can be
+copied to another host without touching `.env`.
 
 | Key | Required | Description |
 | --- | --- | --- |
@@ -125,10 +128,10 @@ All settings live in `.env`. Never commit this file; it holds your broker sessio
 | `WEBHOOK_SECRET_PREVIOUS` | No | Old secret accepted during a rotation window. |
 | `TELEGRAM_LISTENER_ENABLED` | No | `true` enables the direct Telegram listener instead of MacroDroid. |
 | `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` | If listener enabled | From `my.telegram.org`. |
-| `TELEGRAM_SOURCE_CHANNEL` | If listener enabled | Channel to read, for example `@signal_channel`. |
+| `TELEGRAM_CHANNELS_FILE` | No | JSON file listing the channels to read. Default `channels.json`. |
 | `TELEGRAM_SESSION_PATH` | No | Telegram session file location. Default `data/telegram_signal_bot`. |
-| `TELEGRAM_SIGNAL_PROVIDER` | No | Provider label applied to Telegram signals. Default `telegram`. |
-| `SIGNAL_TIMEZONE` | No | Timezone applied when a signal omits one. Default `Etc/GMT-2`. |
+| `TELEGRAM_SIGNAL_PROVIDER` | No | Default provider label when a channel does not set one. Default `telegram`. |
+| `SIGNAL_TIMEZONE` | No | Default timezone when a channel does not set one. Default `Etc/GMT-2`. |
 | `SIGNAL_BOT_STATE_PATH` | No | SQLite file used for message deduplication. Default `data/signal_bot.sqlite3`. |
 | `EDGE_BINARY` | No | Path to the Edge binary, if auto-detection fails. |
 | `POCKETOPTION_PLAYWRIGHT_PROFILE` | No | Persistent Edge profile used for session capture. |
@@ -139,6 +142,93 @@ All settings live in `.env`. Never commit this file; it holds your broker sessio
 | `MIN_BALANCE_RESERVE` | No | Balance floor that must remain after placing a trade. |
 
 Risk values may also be updated at runtime through `POST /set_risk_management`.
+
+### Channel list (`channels.json`)
+
+```json
+{
+  "channels": [
+    {"name": "primary", "channel": "-1003559202666", "timezone": "Etc/GMT-2",
+     "provider": "telegram", "enabled": true},
+    {"channel": "@another_channel", "timezone": "Etc/GMT+4"}
+  ]
+}
+```
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `channel` | Yes | Numeric id (`-100…`) or username (`@name`). |
+| `timezone` | No | The offset that channel posts in, as an `Etc/GMT` name. Falls back to `SIGNAL_TIMEZONE`. |
+| `provider` | No | Provider label for that channel's signals. Falls back to `TELEGRAM_SIGNAL_PROVIDER`. |
+| `name` | No | Friendly label used in logs, `/health`, and deduplication. Defaults to `channel`. |
+| `enabled` | No | `false` skips the channel. Default `true`. |
+
+Only `Etc/GMT` offsets are accepted (`Etc/GMT-14` = GMT+14 through `Etc/GMT+12` = GMT-12). The
+signal parser reads the numeric offset from the end of the string, so a named zone such as
+`Europe/Berlin` is rejected at load rather than failing on every signal. Remember the inversion:
+`Etc/GMT-2` means **GMT+2**.
+
+All channels share one Telegram session and are polled by a single client. Add as many entries as
+you like — the file is plain text and contains no secrets, so it can be version-controlled or copied
+to another host. Set `TELEGRAM_CHANNELS_FILE` to keep it somewhere else. If the file is missing, the
+legacy `TELEGRAM_SOURCE_CHANNEL` / `SIGNAL_TIMEZONE` / `TELEGRAM_SIGNAL_PROVIDER` variables are used
+exactly as before.
+
+Entries are validated as they load. A `timezone` that pytz does not recognise, an entry with no
+`channel`, or the same channel listed twice is **skipped and logged at startup**, and reported under
+`telegram_channel_problems` in `GET /health`. The bot keeps running and the other channels keep
+working, and a mistyped timezone can never cause a trade at the wrong time. A file that cannot be
+parsed at all (bad JSON) is still a hard error.
+
+### Finding channel ids
+
+`fetch_channels.py` lists every channel the Telegram account can read, so you never have to guess an
+id. It runs the login from `telegram_login.py` automatically when no authorized session exists yet:
+
+```bash
+python fetch_channels.py                  # table of all channels and groups
+python fetch_channels.py --search gold    # filter by title, @username or id
+python fetch_channels.py --only channel   # skip groups
+python fetch_channels.py --timezone-hints # suggest a timezone from recent posts
+python fetch_channels.py --json           # machine-readable output
+```
+
+The leftmost column marks channels already in `channels.json` (`X`) and new ones (`.`). Copy an id
+straight into the file, or let the script do it:
+
+```bash
+python fetch_channels.py --write            # append new entries, disabled
+python fetch_channels.py --write --enable   # ... and enable them at once
+```
+
+`--write` only ever adds entries; existing ones are never modified or removed, and new entries are
+saved with `enabled: false` unless you pass `--enable`, so nothing starts trading until you review it.
+
+Timezones cannot be detected reliably, so `--timezone-hints` optionally scans recent posts for
+`GMT+N` / `UTC+N` mentions and suggests the matching (inverted) `Etc/GMT-N` value. Treat the hint as a
+starting point and confirm it before enabling the channel — a wrong timezone shifts every entry time.
+
+Both scripts print progress to stderr, so `--json` can be piped safely. `TELEGRAM_CONNECT_TIMEOUT`
+(default `30` seconds) bounds the initial connection attempt.
+
+### Editing channels from the dashboard
+
+The **Signal channels** panel on the dashboard lists every stored entry and edits the same file, so the
+CLI and the UI never disagree. Each row shows its state, the offset in the form the channel posts in,
+the provider label, and the last message id the listener has seen.
+
+- **Add channel** opens a sheet for the id, label, provider, timezone and on/off state.
+- **Edit** re-opens that sheet; **Delete** lives inside it and asks once.
+- **Pause** / **Resume** flips `enabled` without touching the other fields.
+
+Every change saves the whole list and then reloads the Telegram listener in place, so nothing needs
+restarting. Saving is validated first and written atomically: a rejected save changes nothing on disk,
+and a half-written file can never be read. Entries that do not parse are kept and shown in red with
+the reason, instead of disappearing on the next save — the listener skips them in the meantime.
+
+`POST /set_channels` is not authenticated, exactly like the existing `POST /set_risk_management`. The
+dashboard binds to `127.0.0.1`; if you expose it through a tunnel, put it behind an authenticating
+proxy rather than opening it to the internet.
 
 ---
 
@@ -499,7 +589,7 @@ the timeframe by default).
 | --- | --- | --- |
 | `GET` | `/` | Serves the dashboard. |
 | `GET` | `/ui/` | Static dashboard assets. |
-| `GET` | `/health` | Broker connection, Telegram listener state, `webhook_auth_configured`, and webhook counters. |
+| `GET` | `/health` | Broker connection, Telegram listener state, configured channels, `webhook_auth_configured`, and webhook counters. |
 | `POST` | `/trade_signal` | Signal webhook. Requires `x-webhook-secret` when configured. |
 | `GET` | `/account_details` | Balance, daily P/L, and lifespan P/L. |
 | `GET` | `/open_trades` | Currently open trades. |
@@ -507,6 +597,8 @@ the timeframe by default).
 | `GET` | `/current_signals` | Signals currently held in memory. |
 | `GET` | `/get_risk_management` | Current risk configuration. |
 | `POST` | `/set_risk_management` | Updates risk configuration. Accepts zero values. |
+| `GET` | `/get_channels` | Channel list as stored, the usable timezone offsets, and the listener's live state. |
+| `POST` | `/set_channels` | Replaces the channel list and reloads the listener. Validates the whole list first. |
 
 Example health response:
 
@@ -516,6 +608,16 @@ Example health response:
   "broker_connected": true,
   "telegram_listener_enabled": false,
   "telegram_listener_connected": false,
+  "telegram_channels": [
+    {
+      "name": "primary",
+      "channel": "-1003559202666",
+      "timezone": "Etc/GMT-2",
+      "provider": "telegram",
+      "last_message_id": 4711
+    }
+  ],
+  "telegram_channel_problems": [],
   "webhook_auth_configured": true,
   "webhook": {
     "last_received_at": "2026-09-14 10:38:14",
@@ -641,8 +743,9 @@ the broker is not connected.
   `EDGE_BINARY=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`.
 - **`playwright install` is not required.** The scraper passes `executable_path` and drives your
   installed Edge.
-- **Timezone is inverted in pytz.** `SIGNAL_TIMEZONE` and the MacroDroid `timezone` variable use the
-  flipped offset: `Etc/GMT-2` means **GMT+2**. Getting it wrong shifts every entry time.
+- **Timezone is inverted in pytz.** `SIGNAL_TIMEZONE`, a channel's `timezone`, and the MacroDroid
+  `timezone` variable use the flipped offset: `Etc/GMT-2` means **GMT+2**. Getting it wrong shifts
+  every entry time.
 - **Never commit `.env`.** It holds a live broker session.
 
 ---

@@ -1,4 +1,7 @@
 import asyncio
+import contextlib
+import json
+import re
 from random import random
 import pytz
 from fastapi import FastAPI, Request, HTTPException, status
@@ -12,7 +15,15 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from BinaryOptionsToolsV2.pocketoption import PocketOptionAsync
 from parse_data import parse_macrodroid_trade_data
-from telegram_listener import TelegramSignalListener
+from telegram_listener import (
+    ChannelConfig,
+    TelegramSignalListener,
+    channel_to_dict,
+    channels_file,
+    coerce_channel,
+    read_channel_entries,
+    write_channels,
+)
 import os
 import secrets
 from pydantic import BaseModel, Field
@@ -383,10 +394,20 @@ def can_start_sequence(provider: str | None = None, asset: str | None = None) ->
     return can_start_trade(risk_management.initial_amount, provider, asset)
 
 
-async def handle_telegram_signal(text: str, source_id: str) -> None:
-    """Route a new Telegram post through the same path as MacroDroid."""
-    provider = os.getenv("TELEGRAM_SIGNAL_PROVIDER", "telegram")
-    timezone = os.getenv("SIGNAL_TIMEZONE", risk_management.local_timezone)
+async def handle_telegram_signal(
+    text: str, source_id: str, channel: ChannelConfig | None = None
+) -> None:
+    """Route a new Telegram post through the same path as MacroDroid.
+
+    ``channel`` carries the per-channel defaults configured in channels.json so
+    each source can use its own timezone and provider label.
+    """
+    provider = (channel.provider if channel else None) or os.getenv(
+        "TELEGRAM_SIGNAL_PROVIDER", "telegram"
+    )
+    timezone = (channel.timezone if channel else None) or os.getenv(
+        "SIGNAL_TIMEZONE", risk_management.local_timezone
+    )
     enriched_text = text
     if "signal_provider" not in text.lower():
         enriched_text += f'\nsignal_provider="{provider}"'
@@ -399,6 +420,55 @@ async def handle_telegram_signal(text: str, source_id: str) -> None:
         await take_trade(signal)
     else:
         logger.warning("Rejected Telegram signal from %s", source_id)
+
+
+async def restart_telegram_listener() -> tuple[bool, str]:
+    """Rebuild the Telegram listener so channel edits apply without a restart.
+
+    Returns ``(reloaded, message)``. A failure here does not undo the file
+    write: the saved list is still what the next start will read.
+    """
+    global telegram_listener, telegram_listener_task
+
+    if telegram_listener is not None:
+        try:
+            await telegram_listener.stop()
+        except Exception as exc:
+            logger.warning("Stopping the Telegram listener failed: %s", exc)
+    if telegram_listener_task is not None:
+        telegram_listener_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await telegram_listener_task
+    telegram_listener = None
+    telegram_listener_task = None
+
+    try:
+        telegram_listener = TelegramSignalListener.from_environment(handle_telegram_signal)
+    except Exception as exc:
+        logger.error("Could not rebuild the Telegram listener: %s", exc, exc_info=True)
+        return False, str(exc)
+    if telegram_listener is None:
+        return True, "Telegram listener is disabled in .env"
+
+    telegram_listener_task = asyncio.create_task(telegram_listener.run())
+    logger.info(
+        "Telegram listener reloaded with %d channel(s)", len(telegram_listener.channels)
+    )
+    return True, f"Listening to {len(telegram_listener.channels)} channel(s)"
+
+
+def timezone_choices() -> list[dict[str, str]]:
+    """The Etc/GMT offsets the signal parser can handle, in human order."""
+    choices: dict[int, dict[str, str]] = {}
+    for name in pytz.all_timezones:
+        match = re.fullmatch(r"Etc/GMT([+-])(\d{1,2})", name)
+        if not match:
+            continue
+        hours = int(match.group(2))
+        offset = hours if match.group(1) == "-" else -hours
+        choices.setdefault(offset, {"value": name, "label": f"GMT{offset:+d} ({name})"})
+    return [choices[offset] for offset in sorted(choices)]
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -497,6 +567,10 @@ async def health() -> JSONResponse:
             "telegram_listener_enabled": telegram_listener is not None,
             "telegram_listener_connected": bool(
                 telegram_listener and telegram_listener.client and telegram_listener.client.is_connected()
+            ),
+            "telegram_channels": telegram_listener.status() if telegram_listener else [],
+            "telegram_channel_problems": (
+                telegram_listener.channel_problems if telegram_listener else []
             ),
             "webhook_auth_configured": bool(webhook_secrets),
             "webhook": webhook_stats,
@@ -632,6 +706,105 @@ async def get_risk_management():
     for key, value in risk_management.model_dump().items():
         risk_management_values[key] = value        
     return JSONResponse(status_code= status.HTTP_200_OK,content={"risk_values":risk_management_values})
+
+@app.get("/get_channels", response_class=JSONResponse)
+async def get_channels() -> JSONResponse:
+    """The channel file as it stands, disabled and invalid entries included.
+
+    Invalid entries are returned rather than hidden so the dashboard can show
+    them for correction. They are skipped by the listener, never traded.
+    """
+    global telegram_listener
+    try:
+        entries = read_channel_entries()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "channels_file": str(channels_file()),
+            "channels": entries,
+            "timezone_choices": timezone_choices(),
+            "listener_enabled": telegram_listener is not None,
+            "listener_connected": bool(
+                telegram_listener
+                and telegram_listener.client
+                and telegram_listener.client.is_connected()
+            ),
+            "listener_channels": telegram_listener.status() if telegram_listener else [],
+        },
+    )
+
+@app.post("/set_channels", response_class=JSONResponse)
+async def set_channels(request: Request) -> JSONResponse:
+    """Replace the channel list, then reload the listener.
+
+    The whole list is validated before anything is written, so a rejected save
+    can never leave a half-edited file behind. The write itself is atomic.
+    """
+    global telegram_listener
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Expected a JSON body holding a 'channels' list.",
+        )
+
+    entries = payload.get("channels") if isinstance(payload, dict) else payload
+    if not isinstance(entries, list):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The body needs a 'channels' list.",
+        )
+    if not entries:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Keep at least one entry: the listener needs a source to read.",
+        )
+
+    configs: list[ChannelConfig] = []
+    problems: list[str] = []
+    seen: set[str] = set()
+    for index, entry in enumerate(entries):
+        config, problem = coerce_channel(entry)
+        label = f"Channel {index + 1}"
+        if config is None:
+            problems.append(f"{label}: {problem}")
+            continue
+        if config.channel in seen:
+            problems.append(f"{label}: {config.channel!r} is already listed above")
+            continue
+        seen.add(config.channel)
+        configs.append(config)
+    if problems:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=" ".join(problems)
+        )
+
+    path = channels_file()
+    try:
+        write_channels(str(path), configs)
+    except OSError as exc:
+        logger.error("Could not write %s: %s", path, exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Could not write {path}: {exc}",
+        )
+
+    reloaded, message = True, "Saved"
+    if telegram_listener is not None:
+        reloaded, message = await restart_telegram_listener()
+    logger.info("Saved %d channel(s) to %s; listener: %s", len(configs), path, message)
+
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "message": message if reloaded else f"Saved, but the listener did not restart: {message}",
+            "reloaded": reloaded,
+            "channels": [channel_to_dict(config) for config in configs],
+        },
+    )
 
 @app.post("/trade_signal")
 async def trade_signal_webhook(request: Request):

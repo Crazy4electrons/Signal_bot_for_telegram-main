@@ -48,6 +48,16 @@ const els = {
 	formError: document.getElementById("risk-form-error"),
 	openForm: document.getElementById("set-risk-button"),
 	cancelForm: document.getElementById("cancel-risk-button"),
+	channels: document.getElementById("channels-result"),
+	channelNote: document.getElementById("channels-problems"),
+	addChannel: document.getElementById("add-channel-button"),
+	channelModal: document.getElementById("channel-popup_bg"),
+	channelForm: document.getElementById("channel-form-element"),
+	channelFormError: document.getElementById("channel-form-error"),
+	channelHeading: document.getElementById("channel-form-heading"),
+	channelTimezone: document.getElementById("channel-timezone-input"),
+	deleteChannel: document.getElementById("delete-channel-button"),
+	cancelChannel: document.getElementById("cancel-channel-button"),
 };
 
 const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
@@ -625,6 +635,323 @@ async function handleRiskSubmit(event) {
 	}
 }
 
+/* --- Signal channels ---------------------------------------------------- */
+
+/*
+ * Every change is saved whole: the bot replaces the channel file in one
+ * atomic write and reloads the listener. There is no unsaved state to lose
+ * when the five-second poll re-renders the table underneath an open editor.
+ */
+let lastChannels = [];
+let channelStatus = [];
+let listenerEnabled = false;
+let timezoneChoicesFilled = false;
+let editingIndex = null;
+
+/* "Etc/GMT-2" is stored but "GMT+2" is what the channel actually printed. */
+function timezoneLabel(value) {
+	if (!value) return "default";
+	const offset = toOffsetInput(value);
+	return offset ? `GMT${offset}` : String(value);
+}
+
+function channelPayload(entry) {
+	return {
+		name: entry.name || null,
+		channel: entry.channel,
+		timezone: entry.timezone || null,
+		provider: entry.provider || null,
+		enabled: entry.enabled !== false,
+	};
+}
+
+function isEnabled(entry) {
+	return entry.enabled !== false;
+}
+
+function liveStatusFor(channel) {
+	return channelStatus.find((status) => String(status.channel) === String(channel)) || null;
+}
+
+function setChannelNote(text) {
+	els.channelNote.textContent = text;
+}
+
+function renderChannels() {
+	if (!lastChannels.length) {
+		els.channels.innerHTML = emptyState(
+			"No channels are configured.",
+			"Add one to give the Telegram listener something to read."
+		);
+		setChannelNote(listenerEnabled ? "" : "The listener is switched off in .env, so nothing is read.");
+		return;
+	}
+
+	const rows = lastChannels.map((entry, index) => {
+		const status = entry.problem
+			? `<span class="tag tag--bad">invalid</span>`
+			: isEnabled(entry)
+				? `<span class="tag tag--on">reading</span>`
+				: `<span class="tag tag--off">paused</span>`;
+		const live = liveStatusFor(entry.channel);
+		const problem = entry.problem
+			? `<span class="channel-problem">${escapeHtml(entry.problem)}</span>`
+			: "";
+
+		return `
+			<tr>
+				<td>${status}</td>
+				<td>${cell(entry.name)}</td>
+				<td class="mono channel-cell">${cell(entry.channel)}${problem}</td>
+				<td class="mono">${escapeHtml(timezoneLabel(entry.timezone))}</td>
+				<td>${cell(entry.provider)}</td>
+				<td class="num">${live && live.last_message_id != null ? escapeHtml(String(live.last_message_id)) : "—"}</td>
+				<td class="channel-actions">
+					<button class="button button--quiet" type="button" data-action="edit" data-index="${index}">Edit</button>
+					<button class="button button--quiet" type="button" data-action="toggle" data-index="${index}">${isEnabled(entry) ? "Pause" : "Resume"}</button>
+				</td>
+			</tr>`;
+	}).join("");
+
+	els.channels.innerHTML = `
+		<table class="channels-table">
+			<thead>
+				<tr>
+					<th>State</th>
+					<th>Label</th>
+					<th>Channel</th>
+					<th>Timezone</th>
+					<th>Provider</th>
+					<th class="num">Last id</th>
+					<th></th>
+				</tr>
+			</thead>
+			<tbody>${rows}</tbody>
+		</table>`;
+
+	const reading = lastChannels.filter((entry) => isEnabled(entry) && !entry.problem).length;
+	const invalid = lastChannels.filter((entry) => entry.problem).length;
+	const parts = [];
+	if (!listenerEnabled) {
+		parts.push("The listener is switched off in .env, so nothing is read yet.");
+	} else {
+		parts.push(`Reading ${reading} of ${lastChannels.length} channel${lastChannels.length === 1 ? "" : "s"}.`);
+	}
+	if (invalid) {
+		parts.push(`${invalid} entr${invalid === 1 ? "y is" : "ies are"} invalid and skipped until corrected.`);
+	}
+	setChannelNote(parts.join(" "));
+}
+
+function fillTimezoneChoices(choices) {
+	if (timezoneChoicesFilled || !els.channelTimezone) return;
+	const fragment = document.createDocumentFragment();
+	for (const choice of choices) {
+		if (!choice || !choice.value) continue;
+		const option = document.createElement("option");
+		option.value = choice.value;
+		option.textContent = choice.label || choice.value;
+		fragment.append(option);
+	}
+	els.channelTimezone.append(fragment);
+	timezoneChoicesFilled = true;
+}
+
+async function updateChannels() {
+	try {
+		const response = await fetch("/get_channels");
+		if (!response.ok) throw new Error(`HTTP ${response.status}`);
+		const data = await response.json();
+
+		lastChannels = Array.isArray(data.channels) ? data.channels : [];
+		channelStatus = Array.isArray(data.listener_channels) ? data.listener_channels : [];
+		listenerEnabled = data.listener_enabled === true;
+		fillTimezoneChoices(Array.isArray(data.timezone_choices) ? data.timezone_choices : []);
+
+		clearFailure(els.channels);
+		renderChannels();
+	} catch (error) {
+		renderFailure(els.channels, "Couldn't read the channel list.");
+		console.error("Error fetching channels:", error);
+		throw error;
+	}
+}
+
+async function saveChannels(channels) {
+	try {
+		const response = await fetch("/set_channels", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ channels }),
+		});
+
+		if (!response.ok) {
+			let detail = `The bot rejected this list (HTTP ${response.status}).`;
+			try {
+				const body = await response.json();
+				if (typeof body.detail === "string") detail = body.detail;
+			} catch (error) {
+				/* Not JSON: keep the status message. */
+			}
+			return { ok: false, detail };
+		}
+
+		const body = await response.json();
+		return { ok: true, message: typeof body.message === "string" ? body.message : "Saved" };
+	} catch (error) {
+		console.error("Error saving channels:", error);
+		return { ok: false, detail: "Couldn't reach the bot, so nothing was saved." };
+	}
+}
+
+/* --- The channel sheet -------------------------------------------------- */
+
+function showChannelError(message) {
+	els.channelFormError.textContent = message;
+	els.channelFormError.hidden = false;
+}
+
+function clearChannelError() {
+	els.channelFormError.textContent = "";
+	els.channelFormError.hidden = true;
+}
+
+function setChannelField(name, value) {
+	const field = els.channelForm.elements.namedItem(name);
+	if (field) field.value = value === undefined || value === null ? "" : String(value);
+}
+
+let lastChannelFocus = null;
+
+function showchannelform() {
+	const opening = els.channelModal.classList.contains("hidden");
+
+	if (opening) {
+		lastChannelFocus = document.activeElement;
+	}
+
+	els.channelModal.classList.toggle("hidden", !opening);
+	document.body.style.overflow = opening ? "hidden" : "";
+
+	if (opening) {
+		const firstField = els.channelForm.querySelector("input");
+		if (firstField) firstField.focus();
+	} else if (lastChannelFocus && typeof lastChannelFocus.focus === "function") {
+		lastChannelFocus.focus();
+	}
+}
+
+function openChannelForm(index) {
+	editingIndex = typeof index === "number" ? index : null;
+	const entry = editingIndex === null ? null : lastChannels[editingIndex] || null;
+
+	clearChannelError();
+	els.channelForm.reset();
+	setChannelField("channel", entry ? entry.channel : "");
+	setChannelField("name", entry ? entry.name : "");
+	setChannelField("provider", entry ? entry.provider : "");
+	setChannelField("timezone", entry && entry.timezone ? entry.timezone : "");
+	els.channelForm.elements.namedItem("enabled").checked = entry ? isEnabled(entry) : true;
+
+	els.channelHeading.textContent = entry ? "Edit channel" : "Add channel";
+	els.deleteChannel.hidden = !entry;
+
+	showchannelform();
+}
+
+function readChannelForm() {
+	const raw = Object.fromEntries(new FormData(els.channelForm).entries());
+	return {
+		name: String(raw.name || "").trim() || null,
+		channel: String(raw.channel || "").trim(),
+		timezone: String(raw.timezone || "").trim() || null,
+		provider: String(raw.provider || "").trim() || null,
+		enabled: els.channelForm.elements.namedItem("enabled").checked,
+	};
+}
+
+function payloadList() {
+	return lastChannels.map(channelPayload);
+}
+
+async function handleChannelSubmit(event) {
+	event.preventDefault();
+	if (!els.channelForm.reportValidity()) return;
+
+	const entry = readChannelForm();
+	const next = payloadList();
+	if (editingIndex === null) {
+		next.push(entry);
+	} else {
+		next[editingIndex] = entry;
+	}
+
+	const submit = els.channelForm.querySelector('button[type="submit"]');
+	if (submit) submit.disabled = true;
+	const result = await saveChannels(next);
+	if (submit) submit.disabled = false;
+
+	if (!result.ok) {
+		showChannelError(result.detail);
+		return;
+	}
+
+	clearChannelError();
+	showchannelform();
+	setChannelNote(result.message);
+	try {
+		await updateChannels();
+	} catch (error) {
+		/* The table shows its own error state. */
+	}
+}
+
+async function toggleChannel(index) {
+	const entry = lastChannels[index];
+	if (!entry) return;
+
+	const next = payloadList();
+	next[index] = { ...next[index], enabled: !isEnabled(entry) };
+
+	const result = await saveChannels(next);
+	setChannelNote(result.ok ? result.message : result.detail);
+	try {
+		await updateChannels();
+	} catch (error) {
+		/* The table shows its own error state. */
+	}
+}
+
+async function deleteChannel() {
+	if (editingIndex === null) return;
+	const entry = lastChannels[editingIndex];
+	if (!entry) return;
+
+	if (lastChannels.length === 1) {
+		showChannelError("Keep at least one channel: the listener needs a source to read.");
+		return;
+	}
+	if (!window.confirm(`Remove ${entry.name || entry.channel} from the listener?`)) return;
+
+	const next = payloadList();
+	next.splice(editingIndex, 1);
+
+	const result = await saveChannels(next);
+	if (!result.ok) {
+		showChannelError(result.detail);
+		return;
+	}
+
+	clearChannelError();
+	showchannelform();
+	setChannelNote(result.message);
+	try {
+		await updateChannels();
+	} catch (error) {
+		/* The table shows its own error state. */
+	}
+}
+
 /* --- Connection state --------------------------------------------------- */
 
 let lastSuccessAt = null;
@@ -673,6 +1000,7 @@ async function refreshAll() {
 		updateCurrentSignals(),
 		updateClosedTrades(),
 		updateRiskData(),
+		updateChannels(),
 	]);
 
 	refreshing = false;
@@ -746,14 +1074,32 @@ document.addEventListener("DOMContentLoaded", () => {
 	els.cancelForm.addEventListener("click", showriskform);
 	els.form.addEventListener("submit", handleRiskSubmit);
 
+	els.addChannel.addEventListener("click", () => openChannelForm(null));
+	els.cancelChannel.addEventListener("click", showchannelform);
+	els.deleteChannel.addEventListener("click", deleteChannel);
+	els.channelForm.addEventListener("submit", handleChannelSubmit);
+
+	els.channels.addEventListener("click", (event) => {
+		const button = event.target.closest("button[data-action]");
+		if (!button) return;
+		const index = Number(button.dataset.index);
+		if (!Number.isInteger(index)) return;
+		if (button.dataset.action === "edit") openChannelForm(index);
+		else if (button.dataset.action === "toggle") toggleChannel(index);
+	});
+
 	els.modal.addEventListener("click", (event) => {
 		if (event.target === els.modal) showriskform();
 	});
 
+	els.channelModal.addEventListener("click", (event) => {
+		if (event.target === els.channelModal) showchannelform();
+	});
+
 	document.addEventListener("keydown", (event) => {
-		if (event.key === "Escape" && !els.modal.classList.contains("hidden")) {
-			showriskform();
-		}
+		if (event.key !== "Escape") return;
+		if (!els.channelModal.classList.contains("hidden")) showchannelform();
+		else if (!els.modal.classList.contains("hidden")) showriskform();
 	});
 
 	/* Refresh on return: polling pauses while the tab is in the background. */

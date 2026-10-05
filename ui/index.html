@@ -156,6 +156,17 @@
 			</aside>
 		</div>
 
+		<section class="region" aria-labelledby="channels-heading">
+			<div class="region__bar">
+				<h2 class="region__heading" id="channels-heading">Signal channels</h2>
+				<button class="button" id="add-channel-button" type="button">Add channel</button>
+			</div>
+			<p class="region__note">The Telegram listener reads these channels. Saving writes the channel file
+				and reloads the listener, so nothing has to be restarted.</p>
+			<div class="data" id="channels-result">Loading&hellip;</div>
+		<div class="region__note" id="channels-problems" role="status"></div>
+		</section>
+
 		<section class="region" aria-labelledby="closed-heading">
 			<h2 class="region__heading" id="closed-heading">Closed trades</h2>
 			<p class="region__note">Newest settlement first. The bot keeps the most recent ten.</p>
@@ -218,6 +229,61 @@
 				<div class="modal__actions">
 					<button class="button button--quiet" type="button" id="cancel-risk-button">Cancel</button>
 					<button class="button" type="submit">Save limits</button>
+				</div>
+			</form>
+		</div>
+	</div>
+
+	<div id="channel-popup_bg" class="modal hidden">
+		<div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="channel-form-heading">
+			<h2 class="modal__heading" id="channel-form-heading">Add channel</h2>
+			<p class="modal__note">The listener reads with your Telegram account, so it can only see channels
+				that account already follows.</p>
+
+			<form id="channel-form-element">
+				<p class="form-error" id="channel-form-error" role="alert" hidden></p>
+
+				<div class="field field--wide">
+					<label for="channel-input">Channel id or @username</label>
+					<input type="text" id="channel-input" name="channel" required autocomplete="off"
+						spellcheck="false" placeholder="-1001234567890" />
+					<p class="field__hint">Run <span class="mono">python fetch_channels.py</span> to list the ids
+						your account can read.</p>
+				</div>
+
+				<div class="field">
+					<label for="channel-name-input">Label</label>
+					<input type="text" id="channel-name-input" name="name" autocomplete="off" />
+					<p class="field__hint">Shown on this desk and in the log. Optional.</p>
+				</div>
+
+				<div class="field">
+					<label for="channel-provider-input">Signal provider</label>
+					<input type="text" id="channel-provider-input" name="provider" autocomplete="off" />
+					<p class="field__hint">The name counted against the per-provider limit. Optional.</p>
+				</div>
+
+				<div class="field field--wide">
+					<label for="channel-timezone-input">Timezone of the times it posts</label>
+					<select id="channel-timezone-input" name="timezone">
+						<option value="">Use the global default</option>
+					</select>
+					<p class="field__hint">Pick the offset the channel writes in, for example
+						<span class="mono">GMT+2</span>. Nothing is guessed, and a wrong offset shifts every
+						entry time.</p>
+				</div>
+
+				<div class="field field--wide field--check">
+					<label for="channel-enabled-input">
+						<input type="checkbox" id="channel-enabled-input" name="enabled" checked />
+						Read this channel
+					</label>
+				</div>
+
+				<div class="modal__actions">
+					<button class="button button--quiet" type="button" id="delete-channel-button" hidden>Delete</button>
+					<button class="button button--quiet" type="button" id="cancel-channel-button">Cancel</button>
+					<button class="button" type="submit">Save channel</button>
 				</div>
 			</form>
 		</div>

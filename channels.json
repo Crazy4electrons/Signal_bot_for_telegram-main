@@ -1,0 +1,19 @@
+{
+  "$comment": "Telegram source channels. Safe to commit and share between hosts (no secrets here). Override the path with TELEGRAM_CHANNELS_FILE in .env.",
+  "channels": [
+    {
+      "name": "Magic trader",
+      "channel": "-1003559202666",
+      "timezone": "Etc/GMT+3",
+      "provider": "Magic Trader",
+      "enabled": true
+    },
+    {
+        "name": "Lorenzo",
+        "channel": "-1002074799242",
+        "timezone": "Etc/GMT-2",
+        "provider": "Lorenzo",
+        "enabled": true
+    }
+  ]
+}

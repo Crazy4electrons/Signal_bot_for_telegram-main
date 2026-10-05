@@ -1,0 +1,397 @@
+{
+  "communities": {
+    "0": [
+      "macrodroid_custom_widgets",
+      "macrodroid_http_request_action",
+      "macrodroid_macro_droid",
+      "macrodroid_mdr_export",
+      "macrodroid_pytz_inverted_offset",
+      "macrodroid_readme_guide",
+      "macrodroid_signal_provider",
+      "macrodroid_timezone_variable",
+      "macrodroid_tunnel_url",
+      "macrodroid_webhook_secret",
+      "readme_degraded_startup",
+      "readme_direct_telegram_listener",
+      "readme_fastapi_app",
+      "readme_health_endpoint",
+      "readme_http_endpoints",
+      "readme_macrodroid_webhook_ingestion",
+      "readme_manage_martingale",
+      "readme_martingale",
+      "readme_martingale_strategy",
+      "readme_parse_signal",
+      "readme_playwright_scraper",
+      "readme_pocket_option_session",
+      "readme_pocket_option_signal_bot",
+      "readme_purge_stale_sequences",
+      "readme_risk_controls",
+      "readme_sqlite_state",
+      "readme_stable_public_url",
+      "readme_systemd_service",
+      "readme_take_trade",
+      "readme_webhook_auth",
+      "readme_webhook_secret_rotation",
+      "requirements_aiohttp",
+      "requirements_binaryoptionstoolsv2",
+      "requirements_fastapi",
+      "requirements_playwright",
+      "requirements_python_dotenv",
+      "requirements_pytz",
+      "requirements_requests",
+      "requirements_telethon",
+      "requirements_uvicorn",
+      "ui_favicon_chart_mark",
+      "ui_index_closed_trades_panel",
+      "ui_index_connection_state",
+      "ui_index_current_signals_panel",
+      "ui_index_live_readings",
+      "ui_index_risk_form_element",
+      "ui_index_risk_ladder",
+      "ui_index_signal_desk"
+    ],
+    "1": [
+      "ui_script",
+      "ui_script_applytheme",
+      "ui_script_asarray",
+      "ui_script_cell",
+      "ui_script_clearfailure",
+      "ui_script_clearformerror",
+      "ui_script_displayvalue",
+      "ui_script_els",
+      "ui_script_emptystate",
+      "ui_script_errorstate",
+      "ui_script_escapehtml",
+      "ui_script_formatdirection",
+      "ui_script_formatoutcome",
+      "ui_script_formatpoints",
+      "ui_script_formattimestamp",
+      "ui_script_handlerisksubmit",
+      "ui_script_html_escapes",
+      "ui_script_integer_fields",
+      "ui_script_isnumber",
+      "ui_script_lastriskvalues",
+      "ui_script_money",
+      "ui_script_moneyor",
+      "ui_script_number_fields",
+      "ui_script_observevaluechanges",
+      "ui_script_prefillriskform",
+      "ui_script_pulse",
+      "ui_script_refreshall",
+      "ui_script_renderfailure",
+      "ui_script_renderladder",
+      "ui_script_rendertimestamp",
+      "ui_script_setfieldvalue",
+      "ui_script_setriskdata",
+      "ui_script_setstatus",
+      "ui_script_showformerror",
+      "ui_script_showriskform",
+      "ui_script_signedmoney",
+      "ui_script_toetctimezone",
+      "ui_script_tonumber",
+      "ui_script_tooffsetinput",
+      "ui_script_updatebalance",
+      "ui_script_updateclosedtrades",
+      "ui_script_updatecurrentsignals",
+      "ui_script_updateopentrades",
+      "ui_script_updateriskdata"
+    ],
+    "2": [
+      "argparse",
+      "asyncio",
+      "collections_abc",
+      "datetime",
+      "dotenv",
+      "json",
+      "os",
+      "pathlib",
+      "playwright_async_api",
+      "playwright_scraper",
+      "playwright_scraper_collect",
+      "playwright_scraper_collect_handle_payload",
+      "playwright_scraper_collect_handle_websocket",
+      "playwright_scraper_extract_auth",
+      "playwright_scraper_main",
+      "playwright_scraper_rationale_1",
+      "playwright_scraper_save_to_env",
+      "requests",
+      "shutil",
+      "sqlite3",
+      "telegram_listener",
+      "telegram_listener_rationale_1",
+      "telegram_login",
+      "telegram_login_main",
+      "telegram_login_rationale_1",
+      "telethon",
+      "test",
+      "test_get_asset_emojis",
+      "test_get_direction_emoji",
+      "test_get_next_5min_interval_time",
+      "test_rationale_28",
+      "test_rationale_47",
+      "test_rationale_55",
+      "test_rationale_83",
+      "test_send_test_signal",
+      "time",
+      "typing"
+    ],
+    "3": [
+      "binaryoptionstoolsv2_pocketoption",
+      "contextlib",
+      "fastapi_middleware_cors",
+      "fastapi_responses",
+      "fastapi_staticfiles",
+      "get",
+      "jsonresponse",
+      "main",
+      "main_get_closed_trades",
+      "main_get_current_signals",
+      "main_get_open_trades",
+      "main_get_risk_management",
+      "main_health",
+      "main_root_index",
+      "main_ui_script",
+      "main_ui_styles",
+      "pydantic",
+      "pytz",
+      "random",
+      "rich_logging",
+      "secrets",
+      "starlette_middleware_base",
+      "starlette_requests",
+      "starlette_responses"
+    ],
+    "4": [
+      "basehttpmiddleware",
+      "main_nocacheuimiddleware",
+      "main_nocacheuimiddleware_dispatch",
+      "main_queuemiddleware",
+      "main_queuemiddleware_dispatch",
+      "main_queuemiddleware_init",
+      "main_queuemiddleware_worker",
+      "main_rationale_238",
+      "main_rationale_478",
+      "main_rationale_58",
+      "main_trade_signal_webhook",
+      "main_webhook_auth_ok",
+      "request"
+    ],
+    "5": [
+      "signalcallback",
+      "telegram_listener_rationale_29",
+      "telegram_listener_rationale_53",
+      "telegram_listener_rationale_93",
+      "telegram_listener_telegramsignallistener",
+      "telegram_listener_telegramsignallistener_claim_message",
+      "telegram_listener_telegramsignallistener_from_environment",
+      "telegram_listener_telegramsignallistener_init",
+      "telegram_listener_telegramsignallistener_initialize_state",
+      "telegram_listener_telegramsignallistener_run",
+      "telegram_listener_telegramsignallistener_run_handle_message",
+      "telegram_listener_telegramsignallistener_stop"
+    ],
+    "6": [
+      "main_active_sequences",
+      "main_can_start_sequence",
+      "main_can_start_trade",
+      "main_martingale_exposure",
+      "main_purge_stale_sequences",
+      "main_rationale_260",
+      "main_rationale_287",
+      "main_rationale_300",
+      "main_rationale_309",
+      "main_sequence_max_age_seconds"
+    ],
+    "7": [
+      "logging",
+      "main_handle_telegram_signal",
+      "main_parse_signal",
+      "main_rationale_387",
+      "main_signal",
+      "parse_data",
+      "parse_data_parse_macrodroid_trade_data",
+      "parse_data_rationale_80",
+      "re"
+    ],
+    "8": [
+      "any",
+      "main_get_account_details",
+      "main_manage_martingale",
+      "main_rationale_265",
+      "main_risk_rejection",
+      "main_take_trade",
+      "main_to_float",
+      "main_trade"
+    ],
+    "9": [
+      "main_ensure_webhook_secret",
+      "main_env_file_path",
+      "main_env_flag",
+      "main_persist_env_value",
+      "main_rationale_186",
+      "main_rationale_192",
+      "main_rationale_209",
+      "path"
+    ],
+    "10": [
+      "basemodel",
+      "main_load_risk_management",
+      "main_risk_management",
+      "main_set_risk_management",
+      "main_signal_fields",
+      "main_trade_fields",
+      "post"
+    ],
+    "11": [
+      "fastapi",
+      "main_account_details",
+      "main_account_details_update_balance",
+      "main_lifespan",
+      "main_reset_p_n_l_day"
+    ],
+    "12": [
+      "main_load_webhook_secrets",
+      "main_rationale_155"
+    ],
+    "13": [
+      "pkg_po_signal_bot_2"
+    ],
+    "14": [
+      "requirements_rich"
+    ],
+    "15": [
+      "ui_index_theme_toggle"
+    ]
+  },
+  "cohesion": {
+    "0": 0.05230496453900709,
+    "1": 0.11522198731501057,
+    "2": 0.07807807807807808,
+    "3": 0.10869565217391304,
+    "4": 0.19230769230769232,
+    "5": 0.21212121212121213,
+    "6": 0.2,
+    "7": 0.2222222222222222,
+    "8": 0.35714285714285715,
+    "9": 0.25,
+    "10": 0.2857142857142857,
+    "11": 0.4,
+    "12": 1.0,
+    "13": 1.0,
+    "14": 1.0,
+    "15": 1.0
+  },
+  "gods": [
+    {
+      "id": "ui_script_updateopentrades",
+      "label": "updateOpenTrades()",
+      "degree": 13
+    },
+    {
+      "id": "readme_fastapi_app",
+      "label": "FastAPI Application (main:app)",
+      "degree": 11
+    },
+    {
+      "id": "ui_script_updateclosedtrades",
+      "label": "updateClosedTrades()",
+      "degree": 10
+    },
+    {
+      "id": "telegram_listener_telegramsignallistener",
+      "label": "TelegramSignalListener",
+      "degree": 10
+    },
+    {
+      "id": "ui_script_isnumber",
+      "label": "isNumber()",
+      "degree": 9
+    },
+    {
+      "id": "ui_script_refreshall",
+      "label": "refreshAll()",
+      "degree": 9
+    },
+    {
+      "id": "ui_script_setriskdata",
+      "label": "setRiskData()",
+      "degree": 9
+    },
+    {
+      "id": "main_take_trade",
+      "label": "take_trade()",
+      "degree": 9
+    },
+    {
+      "id": "readme_parse_signal",
+      "label": "parse_signal",
+      "degree": 9
+    },
+    {
+      "id": "ui_script_updatecurrentsignals",
+      "label": "updateCurrentSignals()",
+      "degree": 8
+    }
+  ],
+  "surprises": [
+    {
+      "source": "Three-Bar Amber Chart Mark Favicon",
+      "target": "Pocket Option Signal Bot",
+      "source_files": [
+        "ui/favicon.svg",
+        "README.md"
+      ],
+      "confidence": "INFERRED",
+      "relation": "conceptually_related_to",
+      "why": "inferred connection - not explicitly stated in source; crosses file types (doc \u2194 image); connects across different repos/directories"
+    },
+    {
+      "source": "Three-Bar Amber Chart Mark Favicon",
+      "target": "Signal Desk Dashboard Page",
+      "source_files": [
+        "ui/favicon.svg",
+        "ui/index.html"
+      ],
+      "confidence": "INFERRED",
+      "relation": "semantically_similar_to",
+      "why": "inferred connection - not explicitly stated in source; crosses file types (doc \u2194 image); semantically similar concepts with no structural link"
+    },
+    {
+      "source": "MacroDroid Custom Widgets",
+      "target": "GET /health Endpoint",
+      "source_files": [
+        "Macrodroid/README.md",
+        "README.md"
+      ],
+      "confidence": "INFERRED",
+      "relation": "conceptually_related_to",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; peripheral node `MacroDroid Custom Widgets` unexpectedly reaches hub `GET /health Endpoint`"
+    },
+    {
+      "source": "signal_provider Global Variable",
+      "target": "parse_signal",
+      "source_files": [
+        "Macrodroid/README.md",
+        "README.md"
+      ],
+      "confidence": "INFERRED",
+      "relation": "conceptually_related_to",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; peripheral node `signal_provider Global Variable` unexpectedly reaches hub `parse_signal`"
+    },
+    {
+      "source": "timezone Global Variable",
+      "target": "parse_signal",
+      "source_files": [
+        "Macrodroid/README.md",
+        "README.md"
+      ],
+      "confidence": "INFERRED",
+      "relation": "conceptually_related_to",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; peripheral node `timezone Global Variable` unexpectedly reaches hub `parse_signal`"
+    }
+  ],
+  "tokens": {
+    "input": 0,
+    "output": 0
+  }
+}

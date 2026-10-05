@@ -854,6 +854,111 @@ td.neg {
 	padding-top: var(--space-2);
 }
 
+/* --- Signal channels ----------------------------------------------------- */
+
+.region__bar {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--space-4);
+	flex-wrap: wrap;
+}
+
+/* A heading and its button sit on one line, so the grid gap is paid once. */
+.region__bar + .region__note {
+	margin-top: calc(var(--space-4) * -1 + 2px);
+}
+
+.channel-actions {
+	display: flex;
+	gap: var(--space-2);
+	justify-content: flex-end;
+}
+
+.tag {
+	display: inline-block;
+	padding: 1px 6px;
+	border: 1px solid var(--rule-strong);
+	border-radius: var(--radius-chip);
+	font-size: 11.5px;
+	color: var(--ink-soft);
+	white-space: nowrap;
+}
+
+.tag--on {
+	border-color: color-mix(in srgb, var(--gain) 50%, transparent);
+	color: var(--gain);
+}
+
+.tag--off {
+	color: var(--ink-faint);
+}
+
+.tag--bad {
+	border-color: color-mix(in srgb, var(--loss) 50%, transparent);
+	color: var(--loss);
+}
+
+/* The problem sits under the id, so this one cell has to wrap. */
+.data td.channel-cell {
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+
+.data td.channel-cell .channel-problem {
+	display: block;
+	margin-top: 2px;
+	color: var(--loss);
+	font-size: 12.5px;
+	max-width: 46ch;
+}
+
+#channel-form-element {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: var(--space-5) var(--space-6);
+	margin-top: var(--space-6);
+}
+
+#channel-form-element .field--wide {
+	grid-column: 1 / -1;
+}
+
+.field select {
+	width: 100%;
+	padding: 9px 10px;
+	background: var(--panel-2);
+	border: 1px solid var(--rule-strong);
+	border-radius: var(--radius);
+	color: var(--ink);
+	font-family: var(--font-mono);
+	font-size: 14px;
+}
+
+.field select:focus-visible {
+	outline: none;
+	border-color: var(--focus);
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 32%, transparent);
+}
+
+/* A checkbox is a control, not a field: it must not inherit the input box. */
+.field input[type="checkbox"] {
+	width: auto;
+	padding: 0;
+	background: none;
+	border: none;
+	accent-color: var(--accent);
+}
+
+.field--check label {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	font-size: 13px;
+	font-weight: 400;
+	cursor: pointer;
+}
+
 /* Keep .hidden last in this section: it shares specificity with .modal. */
 .hidden {
 	display: none;

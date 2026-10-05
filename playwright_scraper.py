@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -56,10 +57,43 @@ def extract_auth(payload: str | bytes) -> tuple[str, str, str] | None:
     return str(details["session"]), str(details["isDemo"]), str(details["uid"])
 
 
+def resolve_edge_binary() -> str:
+    """Return a usable Edge executable, preferring an explicit ``EDGE_BINARY``.
+
+    A stale or mistyped ``EDGE_BINARY`` in the shell environment overrides
+    ``.env`` (``load_dotenv`` never overwrites existing variables), which used
+    to surface as a cryptic Playwright "executable doesn't exist" error.
+    Validate the candidate and fall back to the usual locations instead.
+    """
+    configured = os.getenv("EDGE_BINARY")
+    candidates = [
+        configured,
+        shutil.which("microsoft-edge-stable"),
+        shutil.which("microsoft-edge"),
+        "/opt/microsoft/msedge/msedge",
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(candidate)
+        if path.is_file() and os.access(path, os.X_OK):
+            if candidate != configured:
+                print(f"Using Edge at {path}")
+            return str(path)
+        if candidate == configured:
+            print(
+                f"Warning: EDGE_BINARY={candidate!r} is not an executable file; "
+                "ignoring it and auto-detecting Edge.",
+                file=sys.stderr,
+            )
+    raise RuntimeError(
+        "Microsoft Edge was not found. Set EDGE_BINARY in .env to the Edge executable "
+        "(for example /usr/bin/microsoft-edge-stable)."
+    )
+
+
 async def collect(account_type: str, timeout_seconds: int) -> None:
-    edge_binary = os.getenv("EDGE_BINARY") or shutil.which("microsoft-edge-stable") or shutil.which("microsoft-edge")
-    if not edge_binary:
-        raise RuntimeError("Microsoft Edge was not found; set EDGE_BINARY in .env")
+    edge_binary = resolve_edge_binary()
 
     profile_path = Path(os.getenv("POCKETOPTION_PLAYWRIGHT_PROFILE", "data/pocketoption-playwright"))
     profile_path.mkdir(parents=True, exist_ok=True)
