@@ -139,7 +139,7 @@ copied to another host without touching `.env`.
 | `MAX_TRADE_AMOUNT` | No | Hard cap on a single trade amount. |
 | `MAX_SEQUENCE_EXPOSURE` | No | Worst-case total risked across an entire martingale sequence. |
 | `MAX_OPEN_TRADES` | No | Maximum concurrent open trades. |
-| `MIN_BALANCE_RESERVE` | No | Balance floor that must remain after placing a trade. |
+| `MIN_BALANCE_RESERVE` | No | Balance floor that must remain after placing a new sequence's first trade. |
 
 Risk values may also be updated at runtime through `POST /set_risk_management`.
 
@@ -541,7 +541,8 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 ## Risk controls
 
 Martingale multiplies the stake after a loss, so an unbounded sequence can wipe an account. The app
-enforces these limits before every order, initial or recovery:
+enforces these limits before every order sent to the broker, and each entry below names its exact
+scope:
 
 | Setting | Default | Effect |
 | --- | --- | --- |
@@ -552,7 +553,7 @@ enforces these limits before every order, initial or recovery:
 | `MAX_OPEN_TRADES_PER_ASSET` | `1` | Concurrent sequences on the same asset. `0` disables the check. |
 | `MAX_OPEN_TRADES_PER_PROVIDER` | `0` | Concurrent sequences per provider. `0` means unlimited. |
 | `STALE_SEQUENCE_SECONDS` | `0` | Age after which a sequence is assumed dead and its slot reclaimed. `0` derives it as `timeframe x (martingale_levels + 1) x 2 + 120`. |
-| `MIN_BALANCE_RESERVE` | `0` | Rejects a trade that would drop the balance below this floor. |
+| `MIN_BALANCE_RESERVE` | `0` | Rejects a **new sequence's first trade** that would drop the balance below this floor. Recovery legs are exempt, see below. |
 | `drawback_threshold` | `-16` | Halts all signal processing once the daily P/L breaches this floor. |
 
 Worst-case exposure for the defaults (1 initial + 3 recovery levels, multiplier 2) is
@@ -575,6 +576,13 @@ already 1 open trade(s) on EURUSD_otc (max_open_trades_per_asset=1)
 
 A recovery leg excludes its own parent trade from these counts, so a martingale step is never
 blocked by the trade it is recovering.
+
+**Recovery legs and `MIN_BALANCE_RESERVE`.** The reserve only gates the *first* trade of a new
+sequence. A recovery leg is exempt from it, because the parent's loss is already booked: refusing
+the recovery would only lock that loss in and abandon the sequence. A recovery leg must still be
+affordable, so a stake larger than the current balance is rejected, and `MAX_TRADE_AMOUNT`,
+`MARTINGALE_ENABLED` and the open-trade caps all still apply. When a recovery leg is placed below
+the reserve, the app logs that it did so.
 
 If a result lookup never returns, the sequence would otherwise hold its slot forever. Two
 mechanisms prevent that: a failed sequence releases its slot immediately, and

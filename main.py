@@ -346,7 +346,16 @@ def can_start_trade(
     provider: str | None = None,
     asset: str | None = None,
     exclude_trade_id: str | None = None,
+    is_recovery: bool = False,
 ) -> tuple[bool, str]:
+    """Check the per-order limits before an order is sent to the broker.
+
+    ``is_recovery`` marks a martingale leg that recovers an already-open
+    sequence. Such a leg is exempt from ``min_balance_reserve``: the parent's
+    loss is already booked, so refusing the recovery only locks the loss in and
+    abandons the sequence. It still has to be affordable, so the stake may never
+    exceed the current balance.
+    """
     if not risk_management.martingale_enabled and amount != risk_management.initial_amount:
         return False, "martingale is disabled"
     if amount > risk_management.max_trade_amount:
@@ -376,6 +385,23 @@ def can_start_trade(
                 f"already {len(same_provider)} open trade(s) from provider {provider} "
                 f"(max_open_trades_per_provider={risk_management.max_open_trades_per_provider})"
             )
+
+    if is_recovery:
+        if account_details.balance and amount > account_details.balance:
+            return False, (
+                f"recovery stake {amount} exceeds available balance {account_details.balance}"
+            )
+        if account_details.balance and (
+            account_details.balance - amount < risk_management.min_balance_reserve
+        ):
+            logger.info(
+                "Recovery stake $%s would leave $%.2f, below the $%s reserve; "
+                "placing it anyway so the sequence can recover.",
+                amount,
+                account_details.balance - amount,
+                risk_management.min_balance_reserve,
+            )
+        return True, ""
 
     if account_details.balance and account_details.balance - amount < risk_management.min_balance_reserve:
         return False, "minimum balance reserve would be breached"
@@ -1081,6 +1107,7 @@ async def manage_martingale(trade:TRADE)-> bool:
             current_trade.signal_provider,
             current_trade.asset,
             exclude_trade_id=trade.trade_id,
+            is_recovery=True,
         )
         if not allowed:
             risk_rejection(reason)
