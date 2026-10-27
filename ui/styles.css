@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Pocket Option Signal Bot — operations desk
+   Signal Execution Desk — operations desk
    One surface, hairline rules, mono numerals. The brass accents carry
    information (the exposure ladder, live state, focus), never decoration.
    ========================================================================== */
@@ -59,6 +59,7 @@
 	--gain: #43B98A;
 	--loss: #E4707A;
 	--focus: #E8A85A;
+	--ease-out-fast: cubic-bezier(0.23, 1, 0.32, 1);
 
 	--font-sans: "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 	--font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
@@ -356,6 +357,187 @@ main {
 	border-top: none;
 	padding-top: 0;
 	gap: var(--space-5);
+}
+
+.page-nav {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	font-size: 12.5px;
+}
+
+.page-nav a {
+	padding: 6px 9px;
+	border: 1px solid transparent;
+	color: var(--ink-soft);
+	text-decoration: none;
+}
+
+.page-nav a[aria-current="page"],
+.page-nav a:hover {
+	border-color: var(--rule-strong);
+	color: var(--ink);
+}
+
+.layout-choice {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	color: var(--ink-soft);
+	font-size: 12px;
+}
+
+.layout-choice select {
+	width: auto;
+	padding: 6px 8px;
+	background: var(--panel-2);
+	border: 1px solid var(--rule-strong);
+	border-radius: var(--radius);
+	color: var(--ink);
+	font: inherit;
+	cursor: pointer;
+}
+
+.broker-workspaces {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 34rem), 1fr));
+	gap: var(--space-7);
+	align-items: start;
+}
+
+html[data-layout="stacked"] .broker-workspaces {
+	grid-template-columns: minmax(0, 1fr);
+}
+
+.broker-workspace {
+	display: grid;
+	gap: var(--space-4);
+	min-width: 0;
+	padding: var(--space-4);
+	border: 1px solid var(--rule-strong);
+	background: var(--panel);
+}
+
+.broker-workspace > .broker-card__head {
+	padding-bottom: var(--space-3);
+	border-bottom: 1px solid var(--rule);
+}
+
+.broker-workspace .broker-account {
+	display: grid;
+	gap: var(--space-4);
+}
+
+.broker-activity {
+	display: grid;
+	gap: var(--space-5);
+}
+
+.broker-activity .region {
+	gap: var(--space-3);
+	padding-top: var(--space-4);
+}
+
+body[data-page="settings"] .region--brokers,
+body[data-page="settings"] .region--account,
+body[data-page="settings"] .desk__stream,
+body[data-page="settings"] section[aria-labelledby="closed-heading"] {
+	display: none;
+}
+
+body[data-page="settings"] .desk {
+	display: block;
+}
+
+.broker-route {
+	padding: 2px 7px;
+	border-left: 2px solid var(--accent);
+	font-family: var(--font-mono);
+	font-size: 11.5px;
+	color: var(--ink-soft);
+}
+
+.broker-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: var(--space-4);
+}
+
+.broker-card {
+	display: grid;
+	gap: var(--space-3);
+	min-width: 0;
+	padding: var(--space-4);
+	border: 1px solid var(--rule-strong);
+	background: var(--panel);
+}
+
+.broker-card[data-selected="true"] {
+	border-color: var(--accent);
+	box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.broker-card__head,
+.broker-card__actions {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-3);
+}
+
+.broker-card__name {
+	font-size: 15px;
+	font-weight: 600;
+}
+
+.broker-card__account {
+	font-family: var(--font-mono);
+	font-size: 11.5px;
+	color: var(--ink-soft);
+}
+
+.broker-card__state {
+	font-size: 12px;
+	color: var(--ink-soft);
+}
+
+.broker-card__state[data-state="connected"] {
+	color: var(--gain);
+}
+
+.broker-card__state[data-state="disconnected"],
+.broker-card__state[data-state="missing"] {
+	color: var(--loss);
+}
+
+.broker-card__session {
+	display: grid;
+	gap: var(--space-1);
+	padding-top: var(--space-2);
+	border-top: 1px solid var(--rule);
+	color: var(--ink-faint);
+	font-size: 11.5px;
+}
+
+.broker-card__session code {
+	color: var(--ink-soft);
+	font-family: var(--font-mono);
+	overflow-wrap: anywhere;
+}
+
+.broker-loading {
+	color: var(--ink-faint);
+	font-size: 13px;
+}
+
+.broker-note:not(:empty) {
+	max-width: none;
+	color: var(--ink-soft);
+}
+
+.broker-card .button {
+	padding: 7px 10px;
+	font-size: 12.5px;
 }
 
 .region__heading {
@@ -721,6 +903,28 @@ td.neg {
 	border-bottom: none;
 }
 
+.risk-actions {
+	display: grid;
+	gap: var(--space-2);
+}
+
+#risk-profile-input {
+	width: 100%;
+	padding: 9px 10px;
+	background: var(--panel-2);
+	border: 1px solid var(--rule-strong);
+	border-radius: var(--radius);
+	color: var(--ink);
+	font-family: var(--font-mono);
+	font-size: 14px;
+}
+
+#risk-profile-input:focus-visible {
+	outline: none;
+	border-color: var(--focus);
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 32%, transparent);
+}
+
 /* --- Buttons ------------------------------------------------------------- */
 
 .button {
@@ -733,12 +937,27 @@ td.neg {
 	font-size: 13.5px;
 	font-weight: 500;
 	cursor: pointer;
-	transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+	transition:
+		transform 140ms var(--ease-out-fast),
+		border-color 140ms var(--ease-out-fast),
+		color 140ms var(--ease-out-fast),
+		background-color 140ms var(--ease-out-fast);
 }
 
 .button:hover {
 	border-color: var(--accent);
 	color: var(--accent);
+}
+
+.button:active:not(:disabled),
+.icon-button:active {
+	transform: scale(0.96);
+}
+
+.button:disabled,
+.icon-button:disabled {
+	cursor: wait;
+	opacity: 0.6;
 }
 
 .button--quiet {
@@ -992,6 +1211,18 @@ td.neg {
 		gap: var(--space-5);
 	}
 
+	.broker-grid {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.broker-workspaces {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.page-nav {
+		margin-left: auto;
+	}
+
 	.reading {
 		padding: 0;
 		border-left: none;
@@ -1010,7 +1241,13 @@ td.neg {
 @media (max-width: 559px) {
 	.masthead__tools {
 		width: 100%;
-		justify-content: space-between;
+		flex-wrap: wrap;
+		justify-content: flex-start;
+		gap: var(--space-3);
+	}
+
+	.page-nav {
+		margin-left: auto;
 	}
 
 	#risk-form-element {
@@ -1048,5 +1285,10 @@ td.neg {
 	.button,
 	.icon-button {
 		transition: none;
+	}
+
+	.button:active:not(:disabled),
+	.icon-button:active {
+		transform: none;
 	}
 }

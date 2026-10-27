@@ -10,10 +10,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Optional, AsyncIterator, Any
+from typing import AsyncIterator, Any
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
-from BinaryOptionsToolsV2.pocketoption import PocketOptionAsync
 from parse_data import parse_macrodroid_trade_data
 from telegram_listener import (
     ChannelConfig,
@@ -24,6 +23,11 @@ from telegram_listener import (
     read_channel_entries,
     write_channels,
 )
+from state_store import SignalBotStateStore
+
+# Multi-broker abstraction
+from brokers.router import SignalRouter
+from brokers.base import NormalizedSignal
 import os
 import secrets
 from pydantic import BaseModel, Field
@@ -34,11 +38,35 @@ from rich.logging import RichHandler
 import logging
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from typing import Callable, Tuple
+from typing import Callable
 
 load_dotenv()
 
-logging.basicConfig(level="DEBUG", handlers=[RichHandler()])
+class TimestampFormatter(logging.Formatter):
+    def __init__(self, delegate: logging.Formatter):
+        super().__init__()
+        self.delegate = delegate
+
+    def format(self, record: logging.LogRecord) -> str:
+        timestamp = datetime.fromtimestamp(record.created).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        return f"{timestamp} {self.delegate.format(record)}"
+
+
+def configure_terminal_logging() -> None:
+    logging.basicConfig(level="INFO", handlers=[RichHandler(show_time=False)], force=True)
+    seen_handlers = set()
+    for logger_name in ("", "uvicorn", "uvicorn.error", "uvicorn.access"):
+        target_logger = logging.getLogger(logger_name)
+        for handler in target_logger.handlers:
+            if id(handler) in seen_handlers:
+                continue
+            seen_handlers.add(id(handler))
+            current_formatter = handler.formatter or logging.Formatter("%(message)s")
+            if not isinstance(current_formatter, TimestampFormatter):
+                handler.setFormatter(TimestampFormatter(current_formatter))
+
+
+configure_terminal_logging()
 logger = logging.getLogger("PO_Signal")
 
 class RISK_MANAGEMENT(BaseModel):
@@ -57,50 +85,22 @@ class RISK_MANAGEMENT(BaseModel):
     stale_sequence_seconds: int = Field(default=0, ge=0)
     min_balance_reserve: float = Field(default=0, ge=0)
 
-class ACCOUNT_DETAILS(BaseModel):
-    balance: float=0.0
-    P_n_L_day: float=0.0
-    lifespan: float=0.0
-    async def update_balance(self,api):
-        self.balance = await api.balance()
-        
 
-class QueueMiddleware(BaseHTTPMiddleware):
-    """Queue incoming HTTP requests and process them sequentially.
+class BROKER_RISK_OVERRIDE(BaseModel):
+    initial_amount: float | None = Field(default=None, gt=0)
+    martingale_levels: int | None = Field(default=None, ge=0)
+    martingale_multiplier: float | None = Field(default=None, ge=1)
+    drawback_threshold: int | None = Field(default=None, le=0)
+    timeframe: int | None = Field(default=None, gt=0)
+    martingale_enabled: bool | None = None
+    max_trade_amount: float | None = Field(default=None, gt=0)
+    max_sequence_exposure: float | None = Field(default=None, gt=0)
+    max_open_trades: int | None = Field(default=None, ge=1)
+    max_open_trades_per_asset: int | None = Field(default=None, ge=0)
+    max_open_trades_per_provider: int | None = Field(default=None, ge=0)
+    stale_sequence_seconds: int | None = Field(default=None, ge=0)
+    min_balance_reserve: float | None = Field(default=None, ge=0)
 
-    - max_queue: 0 means unlimited queue size. Set >0 to limit queue length.
-    """
-    def __init__(self, app, max_queue: int = 0):
-        super().__init__(app)
-        self._queue: asyncio.Queue[Tuple[Callable, Request, asyncio.Future]] = asyncio.Queue(maxsize=max_queue)
-        self._worker_task: asyncio.Task | None = None
-
-    async def dispatch(self, request: Request, call_next: Callable):
-        # start worker lazily on first request (safe for startup ordering)
-        if self._worker_task is None or self._worker_task.done():
-            self._worker_task = asyncio.create_task(self._worker())
-
-        loop = asyncio.get_event_loop()
-        response_future: asyncio.Future = loop.create_future()
-        # enqueue the work item: (call_next coroutine factory, request, future to set result)
-        await self._queue.put((call_next, request, response_future))
-        # wait until worker sets the result (Response) or raises
-        response = await response_future
-        return response
-
-    async def _worker(self):
-        while True:
-            call_next, request, response_future = await self._queue.get()
-            try:
-                # call_next(request) returns a coroutine that yields a Response when awaited
-                response = await call_next(request)
-                if not response_future.cancelled():
-                    response_future.set_result(response)
-            except Exception as e:
-                if not response_future.cancelled():
-                    response_future.set_exception(e)
-            finally:
-                self._queue.task_done()
 
 class TRADE_FIELDS( BaseModel):
     signal_provider: str
@@ -110,6 +110,8 @@ class TRADE_FIELDS( BaseModel):
     level:int
     open_price:float
     amount:float
+    broker_id: str
+    signal_id: str | None = None
 class TRADE(BaseModel):
     trade_id:str
     trade_details:TRADE_FIELDS
@@ -118,12 +120,15 @@ class SIGNAL_FIELDS(BaseModel):
     asset:str
     direction:str
     entry_time:datetime
+    broker_id: str | None = None
+    channel_key: str | None = None
 class SIGNAL(BaseModel):
     # map Tsid to signal details
     signal_id:str
     signal_details:SIGNAL_FIELDS
 
-account_details:ACCOUNT_DETAILS = ACCOUNT_DETAILS()
+def risk_settings_file() -> Path:
+    return Path(os.getenv("RISK_SETTINGS_FILE", "risk_settings.json"))
 
 
 def load_risk_management() -> RISK_MANAGEMENT:
@@ -152,13 +157,433 @@ def load_risk_management() -> RISK_MANAGEMENT:
 
 
 risk_management:RISK_MANAGEMENT = load_risk_management()
+risk_overrides: dict[str, dict[str, Any]] = {}
+broker_pnl_today: dict[str, float] = {}
+broker_lifespan: dict[str, float] = {}
+broker_balances: dict[str, float] = {}
+
+
+def load_risk_settings() -> None:
+    """Load persisted global risk values and optional per-broker overrides."""
+    global risk_management, risk_overrides
+    path = risk_settings_file()
+    if not path.is_file():
+        return
+    try:
+        settings = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(settings, dict):
+            raise ValueError("risk settings must be a JSON object")
+        global_values = settings.get("global")
+        overrides = settings.get("broker_overrides", {})
+        if not isinstance(overrides, dict):
+            raise ValueError("risk settings must contain an object of broker_overrides")
+        unknown_brokers = set(overrides) - {"pocket_option", "quotex"}
+        if unknown_brokers:
+            raise ValueError(
+                f"risk settings contain unsupported broker overrides: "
+                f"{', '.join(sorted(unknown_brokers))}"
+            )
+        if global_values is not None:
+            risk_management = RISK_MANAGEMENT.model_validate(global_values)
+        risk_overrides = {
+            broker_id: BROKER_RISK_OVERRIDE.model_validate(values)
+            .model_dump(exclude_none=True)
+            for broker_id, values in overrides.items()
+        }
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise RuntimeError(f"Could not load risk settings from {path}: {exc}") from exc
+
+
+def persist_risk_settings(
+    global_values: RISK_MANAGEMENT | None = None,
+    overrides: dict[str, dict[str, Any]] | None = None,
+) -> None:
+    path = risk_settings_file()
+    temporary_path = path.with_name(f".{path.name}.tmp")
+    payload = {
+        "global": (global_values or risk_management).model_dump(),
+        "broker_overrides": overrides if overrides is not None else risk_overrides,
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        temporary_path.replace(path)
+    except OSError:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
+load_risk_settings()
 Signals:dict = {}
 trade_details:dict = {}
 closed_trades:dict = {}
+runtime_state: SignalBotStateStore | None = None
+runtime_state_loaded = False
+resumed_trade_tasks: dict[str, asyncio.Task] = {}
 telegram_listener: TelegramSignalListener | None = None
 telegram_listener_task: asyncio.Task | None = None
-api: PocketOptionAsync | None = None
+
 broker_connected = False
+
+# Multi-broker state. We keep Pocket behavior intact while we migrate.
+broker_registry: dict[str, Any] = {}
+broker_tasks: dict[str, asyncio.Task] = {}
+connected_brokers: set[str] = set()
+broker_connection_locks: dict[str, asyncio.Lock] = {}
+signal_router: SignalRouter | None = None
+BROKER_NAMES = {
+    "pocket_option": "Pocket Option",
+    "quotex": "Quotex",
+}
+
+
+def get_runtime_state() -> SignalBotStateStore:
+    global runtime_state
+    if runtime_state is None:
+        runtime_state = SignalBotStateStore(
+            os.getenv("SIGNAL_BOT_STATE_PATH", "signal_bot.sqlite3")
+        )
+    return runtime_state
+
+
+def local_trading_date() -> date:
+    return datetime.now(pytz.timezone(str(risk_management.local_timezone))).date()
+
+
+def restore_runtime_state() -> None:
+    global runtime_state_loaded
+    if runtime_state_loaded:
+        return
+    store = get_runtime_state()
+    interrupted = store.interrupt_unfinished_signals()
+    Signals.clear()
+    trade_details.clear()
+    closed_trades.clear()
+    for entry in store.load_active_trades():
+        if entry["state"] != "monitoring":
+            logger.warning(
+                "Persisted trade %s is in %s state and requires manual review; it will not be replayed.",
+                entry["trade_id"],
+                entry["state"],
+            )
+            continue
+        trade_details[entry["trade_id"]] = TRADE_FIELDS.model_validate(
+            entry["trade_details"]
+        )
+    closed_trades.update(store.load_closed_trades())
+    daily, lifetime = store.pnl_totals(local_trading_date())
+    broker_pnl_today.clear()
+    broker_pnl_today.update(daily)
+    broker_lifespan.clear()
+    broker_lifespan.update(lifetime)
+    runtime_state_loaded = True
+    if any(interrupted.values()):
+        logger.warning(
+            "Restart recovery: %s pending signal(s) interrupted, %s ambiguous signal(s), "
+            "%s ambiguous trade(s) marked for review.",
+            interrupted["interrupted"],
+            interrupted["needs_review"],
+            interrupted["ambiguous_trades"],
+        )
+    logger.info(
+        "Restored runtime state: %s confirmed active trade(s), %s closed trade(s).",
+        len(trade_details),
+        len(closed_trades),
+    )
+
+
+def resume_active_trades(broker_id: str | None = None) -> None:
+    for trade_id, details in list(trade_details.items()):
+        if broker_id is not None and details.broker_id != broker_id:
+            continue
+        existing_task = resumed_trade_tasks.get(trade_id)
+        if existing_task is not None and not existing_task.done():
+            continue
+        if not broker_is_connected(details.broker_id):
+            continue
+        trade = TRADE(trade_id=trade_id, trade_details=details)
+        task = asyncio.create_task(
+            manage_martingale(trade),
+            name=f"resume-trade-{trade_id}",
+        )
+        resumed_trade_tasks[trade_id] = task
+
+        def log_task_failure(done_task: asyncio.Task, current_id: str = trade_id) -> None:
+            if resumed_trade_tasks.get(current_id) is done_task:
+                resumed_trade_tasks.pop(current_id, None)
+            try:
+                done_task.result()
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                logger.exception("Recovered trade monitor failed for trade %s", current_id)
+
+        task.add_done_callback(log_task_failure)
+
+
+def normalise_broker_id(broker_id: str) -> str:
+    """Return the canonical ID for a supported broker."""
+    broker_id = broker_id.strip().lower().replace("-", "_")
+    if broker_id not in BROKER_NAMES:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Unsupported broker: {broker_id}",
+        )
+    return broker_id
+
+
+def effective_risk_management(broker_id: str) -> RISK_MANAGEMENT:
+    values = risk_management.model_dump()
+    values.update(risk_overrides.get(broker_id, {}))
+    return RISK_MANAGEMENT.model_validate(values)
+
+
+def broker_pnl(broker_id: str) -> float:
+    return float(broker_pnl_today.get(broker_id, 0.0))
+
+
+def broker_lifetime_pnl(broker_id: str) -> float:
+    return float(broker_lifespan.get(broker_id, 0.0))
+
+
+def record_broker_pnl(
+    broker_id: str, amount: float, event_id: str | None = None
+) -> None:
+    event_id = event_id or secrets.token_hex(16)
+    if not get_runtime_state().record_pnl_event(
+        event_id, broker_id, local_trading_date(), amount
+    ):
+        return
+    broker_pnl_today[broker_id] = broker_pnl(broker_id) + amount
+    broker_lifespan[broker_id] = broker_lifetime_pnl(broker_id) + amount
+
+
+def finalize_trade(
+    trade_id: str,
+    payload: dict[str, Any],
+    *,
+    signal_id: str | None = None,
+    signal_status: str = "completed",
+) -> None:
+    get_runtime_state().finish_trade(
+        trade_id,
+        payload,
+        signal_id=signal_id,
+        signal_status=signal_status,
+    )
+    closed_trades[trade_id] = payload
+    trade_details.pop(trade_id, None)
+
+
+def trade_history_payload(
+    details: TRADE_FIELDS,
+    result: str,
+    from_server: dict[str, Any],
+    *,
+    amount: float | None = None,
+    level: int | None = None,
+) -> dict[str, Any]:
+    return {
+        "trade_details": {
+            "direction": details.direction,
+            "asset": details.asset,
+            "amount": details.amount if amount is None else amount,
+            "level": details.level if level is None else level,
+            "signal_provider": details.signal_provider,
+            "result": result,
+            "entry_time": details.entry_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "open_price": details.open_price,
+        },
+        "broker_id": details.broker_id,
+        "from_server": from_server,
+    }
+
+
+def broker_account_type(broker_id: str) -> str:
+    if broker_id == "quotex":
+        if os.getenv("QUOTEX_IS_DEMO") is not None:
+            return "DEMO" if env_flag("QUOTEX_IS_DEMO") else "REAL"
+        return os.getenv("QUOTEX_ACCOUNT_TYPE", "DEMO").strip().upper()
+    return os.getenv("POCKETOPTION_ACCOUNT_TYPE", "DEMO").strip().upper()
+
+
+def broker_is_connected(broker_id: str) -> bool:
+    if broker_id not in connected_brokers:
+        return False
+    adapter = broker_registry.get(broker_id)
+    adapter_connected = getattr(adapter, "is_connected", None) if adapter is not None else None
+    return bool(adapter_connected) if adapter_connected is not None else True
+
+
+def broker_status_payload() -> dict[str, Any]:
+    """Expose connection readiness without returning session or credential data."""
+    brokers = []
+    for broker_id, name in BROKER_NAMES.items():
+        prefix = "QUOTEX" if broker_id == "quotex" else "POCKETOPTION"
+        configured = bool(os.getenv(f"{prefix}_SSID"))
+        if broker_id == "quotex":
+            configured = configured or env_flag("QUOTEX_BROWSER_SESSION", True)
+        brokers.append({
+            "id": broker_id,
+            "name": name,
+            "account_type": broker_account_type(broker_id),
+            "configured": configured,
+            "connected": broker_is_connected(broker_id),
+        })
+    return {"brokers": brokers}
+
+
+def broker_routes_for_channels(entries: list[dict[str, Any]]) -> dict[str, str]:
+    routes: dict[str, str] = {}
+    for entry in entries:
+        broker_id = entry.get("broker")
+        channel = entry.get("channel")
+        if broker_id in BROKER_NAMES and channel:
+            routes[str(channel)] = broker_id
+            if entry.get("name"):
+                routes[str(entry["name"])] = broker_id
+    return routes
+
+
+def route_signal_to_broker(signal_data: SIGNAL_FIELDS) -> str:
+    try:
+        if signal_router is None:
+            if not signal_data.broker_id:
+                raise ValueError("Signal has no broker destination.")
+            return normalise_broker_id(signal_data.broker_id)
+        decision = signal_router.decide(
+            NormalizedSignal(
+                signal_id=signal_data.signal_provider,
+                signal_provider=signal_data.signal_provider,
+                asset=signal_data.asset,
+                direction=signal_data.direction,
+                entry_time=signal_data.entry_time,
+                broker_hint=signal_data.broker_id,
+            ),
+            channel_key=signal_data.channel_key,
+        )
+        return normalise_broker_id(decision.broker_ids[0])
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Signal has no broker destination; configure its Telegram channel "
+                "or include broker metadata."
+            ),
+        ) from exc
+
+
+async def get_or_create_pocket_broker() -> Any:
+    ssid = os.getenv("POCKETOPTION_SSID")
+    if not ssid:
+        raise RuntimeError("POCKETOPTION_SSID is not configured")
+    broker = broker_registry.get("pocket_option")
+    if broker is not None:
+        return broker
+
+    # Adapter used by router + future multi-broker.
+    from brokers.pocket_option import PocketOptionBroker
+
+    broker = PocketOptionBroker(broker_id="pocket_option", ssid=ssid)
+    broker_registry["pocket_option"] = broker
+    return broker
+
+
+async def get_or_create_broker(broker_id: str) -> Any:
+    if broker_id == "pocket_option":
+        return await get_or_create_pocket_broker()
+
+    broker = broker_registry.get(broker_id)
+    if broker is not None:
+        return broker
+
+    if broker_id == "quotex":
+        from brokers.quotex import QuotexBroker
+
+        ssid = os.getenv("QUOTEX_SSID")
+        default_demo = os.getenv("QUOTEX_ACCOUNT_TYPE", "DEMO").strip().upper() != "REAL"
+        is_demo_raw = os.getenv("QUOTEX_IS_DEMO", str(default_demo)).lower().strip()
+        is_demo = is_demo_raw in {"1", "true", "yes", "y"}
+        regions_raw = os.getenv("QUOTEX_REGIONS", "").strip()
+        regions = [r.strip() for r in regions_raw.split(",") if r.strip()] or None
+        browser_session = os.getenv("QUOTEX_BROWSER_SESSION", "true").strip().lower() in {
+            "1", "true", "yes", "on",
+        }
+        browser_headless = os.getenv("QUOTEX_BROWSER_HEADLESS", "false").strip().lower() in {
+            "1", "true", "yes", "on",
+        }
+        browser_auth_timeout = int(os.getenv("QUOTEX_BROWSER_AUTH_TIMEOUT", "120"))
+
+        broker = QuotexBroker(
+            ssid=ssid or None,
+            is_demo=is_demo,
+            regions=regions,
+            use_browser_session=browser_session,
+            browser_headless=browser_headless,
+            browser_auth_timeout=browser_auth_timeout,
+        )
+        broker_registry[broker_id] = broker
+        return broker
+
+    raise RuntimeError(f"Unsupported broker_id: {broker_id}")
+
+
+async def ensure_broker_connected(broker_id: str) -> Any:
+    global broker_connected
+    broker = await get_or_create_broker(broker_id)
+    lock = broker_connection_locks.setdefault(broker_id, asyncio.Lock())
+    async with lock:
+        if not broker_is_connected(broker_id):
+            if broker_id in connected_brokers:
+                logger.warning("Detected disconnected broker=%s; reconnecting adapter", broker_id)
+                connected_brokers.discard(broker_id)
+                broker_connected = any(broker_is_connected(candidate) for candidate in BROKER_NAMES)
+                await broker.disconnect()
+            if not await broker.connect():
+                raise RuntimeError(f"Broker connection failed: {broker_id}")
+            connected_brokers.add(broker_id)
+    broker_connected = any(broker_is_connected(candidate) for candidate in BROKER_NAMES)
+    return broker
+
+
+async def ensure_broker_session(broker_id: str) -> None:
+    """Leave Quotex authorization to the fork's native saved-session login flow."""
+    if broker_id == "quotex":
+        return
+
+    prefix_by_broker = {
+        "pocket_option": "POCKETOPTION",
+        "quotex": "QUOTEX",
+    }
+    prefix = prefix_by_broker.get(broker_id)
+    if prefix is None:
+        raise RuntimeError(f"Unsupported broker_id: {broker_id}")
+    if os.getenv(f"{prefix}_SSID"):
+        return
+
+    email = os.getenv(f"{prefix}_EMAIL")
+    password = os.getenv(f"{prefix}_PASSWORD")
+    if not email or not password:
+        raise RuntimeError(
+            f"{prefix}_SSID is missing; configure {prefix}_EMAIL and {prefix}_PASSWORD "
+            "or run playwright_scraper.py interactively first."
+        )
+
+    from playwright_scraper import capture_session
+
+    account_type = os.getenv(f"{prefix}_ACCOUNT_TYPE", "DEMO").upper()
+    if broker_id == "quotex" and os.getenv("QUOTEX_IS_DEMO") is not None:
+        account_type = "DEMO" if env_flag("QUOTEX_IS_DEMO") else "REAL"
+    headless = env_flag(f"{prefix}_SCRAPER_HEADLESS", True)
+    timeout_seconds = int(os.getenv(f"{prefix}_SCRAPER_TIMEOUT", "120"))
+    await capture_session(
+        broker_id,
+        account_type,
+        email=email,
+        password=password,
+        headless=headless,
+        timeout_seconds=timeout_seconds,
+    )
 
 # Shared secret guarding POST /trade_signal. Required whenever the endpoint is
 # reachable from the public internet (tunnel, ngrok, or a relay).
@@ -294,7 +719,10 @@ def risk_rejection(reason: str) -> None:
     logger.warning("Trade rejected by risk controls: %s", reason)
 
 
-def active_sequences(exclude_trade_id: str | None = None) -> list[TRADE_FIELDS]:
+def active_sequences(
+    exclude_trade_id: str | None = None,
+    broker_id: str | None = None,
+) -> list[TRADE_FIELDS]:
     """Currently open sequences, excluding one trade id when needed.
 
     A recovery leg must exclude its own parent, otherwise the parent would count
@@ -304,16 +732,17 @@ def active_sequences(exclude_trade_id: str | None = None) -> list[TRADE_FIELDS]:
         details
         for trade_id, details in list(trade_details.items())
         if trade_id != exclude_trade_id
+        and (broker_id is None or details.broker_id == broker_id)
     ]
 
 
-def sequence_max_age_seconds() -> int:
+def sequence_max_age_seconds(risk: RISK_MANAGEMENT) -> int:
     """Age after which a sequence is assumed dead and its slot reclaimed."""
-    if risk_management.stale_sequence_seconds > 0:
-        return risk_management.stale_sequence_seconds
-    legs = risk_management.martingale_levels + 1 if risk_management.martingale_enabled else 1
+    if risk.stale_sequence_seconds > 0:
+        return risk.stale_sequence_seconds
+    legs = risk.martingale_levels + 1 if risk.martingale_enabled else 1
     # Every leg can run for one timeframe, with slack for settlement lookups.
-    return risk_management.timeframe * legs * 2 + 120
+    return risk.timeframe * legs * 2 + 120
 
 
 def purge_stale_sequences() -> int:
@@ -324,9 +753,10 @@ def purge_stale_sequences() -> int:
     """
     local_tz = pytz.timezone(str(risk_management.local_timezone))
     now = datetime.now(local_tz)
-    max_age = sequence_max_age_seconds()
     removed = 0
     for trade_id, details in list(trade_details.items()):
+        risk = effective_risk_management(details.broker_id)
+        max_age = sequence_max_age_seconds(risk)
         entry_time = details.entry_time
         if entry_time.tzinfo is None:
             entry_time = local_tz.localize(entry_time)
@@ -347,6 +777,9 @@ def can_start_trade(
     asset: str | None = None,
     exclude_trade_id: str | None = None,
     is_recovery: bool = False,
+    broker_id: str | None = None,
+    risk: RISK_MANAGEMENT | None = None,
+    balance: float | None = None,
 ) -> tuple[bool, str]:
     """Check the per-order limits before an order is sent to the broker.
 
@@ -356,68 +789,95 @@ def can_start_trade(
     abandons the sequence. It still has to be affordable, so the stake may never
     exceed the current balance.
     """
-    if not risk_management.martingale_enabled and amount != risk_management.initial_amount:
+    risk = risk or risk_management
+    if balance is None:
+        balance = broker_balances.get(broker_id) if broker_id else None
+    if not risk.martingale_enabled and amount != risk.initial_amount:
         return False, "martingale is disabled"
-    if amount > risk_management.max_trade_amount:
+    if amount > risk.max_trade_amount:
         return False, f"trade amount {amount} exceeds max_trade_amount"
 
-    open_sequences = active_sequences(exclude_trade_id)
-    if len(open_sequences) >= risk_management.max_open_trades:
+    open_sequences = active_sequences(exclude_trade_id, broker_id)
+    if len(open_sequences) >= risk.max_open_trades:
         summary = ", ".join(
             f"{d.signal_provider}/{d.asset}/{d.direction}" for d in open_sequences
         )
         return False, (
-            f"maximum open trades reached ({len(open_sequences)}/{risk_management.max_open_trades}): {summary}"
+            f"maximum open trades reached ({len(open_sequences)}/{risk.max_open_trades}): {summary}"
         )
 
-    if asset and risk_management.max_open_trades_per_asset:
+    if asset and risk.max_open_trades_per_asset:
         same_asset = [d for d in open_sequences if d.asset == asset]
-        if len(same_asset) >= risk_management.max_open_trades_per_asset:
+        if len(same_asset) >= risk.max_open_trades_per_asset:
             return False, (
                 f"already {len(same_asset)} open trade(s) on {asset} "
-                f"(max_open_trades_per_asset={risk_management.max_open_trades_per_asset})"
+                f"(max_open_trades_per_asset={risk.max_open_trades_per_asset})"
             )
 
-    if provider and risk_management.max_open_trades_per_provider:
+    if provider and risk.max_open_trades_per_provider:
         same_provider = [d for d in open_sequences if d.signal_provider == provider]
-        if len(same_provider) >= risk_management.max_open_trades_per_provider:
+        if len(same_provider) >= risk.max_open_trades_per_provider:
             return False, (
                 f"already {len(same_provider)} open trade(s) from provider {provider} "
-                f"(max_open_trades_per_provider={risk_management.max_open_trades_per_provider})"
+                f"(max_open_trades_per_provider={risk.max_open_trades_per_provider})"
             )
 
     if is_recovery:
-        if account_details.balance and amount > account_details.balance:
+        if balance is not None and amount > balance:
             return False, (
-                f"recovery stake {amount} exceeds available balance {account_details.balance}"
+                f"recovery stake {amount} exceeds available balance {balance}"
             )
-        if account_details.balance and (
-            account_details.balance - amount < risk_management.min_balance_reserve
+        if balance is not None and (
+            balance - amount < risk.min_balance_reserve
         ):
             logger.info(
                 "Recovery stake $%s would leave $%.2f, below the $%s reserve; "
                 "placing it anyway so the sequence can recover.",
                 amount,
-                account_details.balance - amount,
-                risk_management.min_balance_reserve,
+                balance - amount,
+                risk.min_balance_reserve,
             )
         return True, ""
 
-    if account_details.balance and account_details.balance - amount < risk_management.min_balance_reserve:
+    if balance is not None and balance - amount < risk.min_balance_reserve:
         return False, "minimum balance reserve would be breached"
     return True, ""
 
 
-def can_start_sequence(provider: str | None = None, asset: str | None = None) -> tuple[bool, str]:
+def can_start_sequence(
+    provider: str | None = None,
+    asset: str | None = None,
+    *,
+    broker_id: str,
+    risk: RISK_MANAGEMENT,
+) -> tuple[bool, str]:
     purge_stale_sequences()
     exposure = martingale_exposure(
-        risk_management.initial_amount,
-        risk_management.martingale_multiplier if risk_management.martingale_enabled else 1,
-        risk_management.martingale_levels if risk_management.martingale_enabled else 0,
+        risk.initial_amount,
+        risk.martingale_multiplier if risk.martingale_enabled else 1,
+        risk.martingale_levels if risk.martingale_enabled else 0,
     )
-    if exposure > risk_management.max_sequence_exposure:
+    if exposure > risk.max_sequence_exposure:
         return False, f"worst-case sequence exposure {exposure} exceeds max_sequence_exposure"
-    return can_start_trade(risk_management.initial_amount, provider, asset)
+    return can_start_trade(
+        risk.initial_amount,
+        provider,
+        asset,
+        broker_id=broker_id,
+        risk=risk,
+    )
+
+
+def normalize_trade_result(value: Any) -> str:
+    """Normalize broker result labels without treating missing data as a win."""
+    result = str(value or "").strip().upper()
+    if result in {"WIN", "WON"}:
+        return "WIN"
+    if result in {"LOSS", "LOST"}:
+        return "LOSS"
+    if result in {"DRAW", "TIE", "EQUAL"}:
+        return "DRAW"
+    return "UNKNOWN"
 
 
 async def handle_telegram_signal(
@@ -440,10 +900,10 @@ async def handle_telegram_signal(
     if "timezone" not in text.lower():
         enriched_text += f'\ntimezone="{timezone}"'
 
-    signal = await parse_signal(enriched_text)
-    if signal:
+    signal = await parse_signal(enriched_text, channel_config=channel)
+    if signal is not None:
         logger.info("Accepted Telegram signal %s from %s", signal.signal_id, source_id)
-        await take_trade(signal)
+        asyncio.create_task(take_trade(signal))
     else:
         logger.warning("Rejected Telegram signal from %s", source_id)
 
@@ -498,16 +958,12 @@ def timezone_choices() -> list[dict[str, str]]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    global api,account_details,risk_management,telegram_listener,telegram_listener_task,broker_connected
+    global risk_management,telegram_listener,telegram_listener_task,broker_connected,signal_router
     ensure_webhook_secret()
-    #connect client
-    ssid = os.getenv("ssid")
-    if not ssid:
-        logger.critical("SSID not found in .env; starting in degraded mode with trading disabled.")
-        yield
-        return
-    
-    logger.info("FastAPI lifespan startup event: Initializing Pocket Option client.")
+    connected_brokers.clear()
+    broker_connected = False
+    restore_runtime_state()
+    logger.info("FastAPI lifespan startup event: Initializing broker adapters.")
     # Risk settings come from the environment (see load_risk_management) or from
     # POST /set_risk_management. Startup must never block on stdin, otherwise a
     # service manager restart would hang forever.
@@ -518,32 +974,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if not risk_management.martingale_enabled:
         logger.warning("Martingale recovery is disabled; losing trades will not be recovered.")
 
+    # Router maps each explicitly configured Telegram channel to its broker.
+    broker_for_channel: dict[str, str] = {}
     try:
-        api = PocketOptionAsync(ssid) #type: ignore
-        await asyncio.sleep(5)
-        for _ in range(3):
-            logger.info(f"${api}")
-            balance = await api.balance()
-            if balance:
-                logger.info("FastAPI lifespan startup event: Connected to Pocket Option client.")
-                broker_connected = True
-                logger.info(f"Startup Balance: {balance}")
-                logger.info(f"\n\n\n== Risk management values == \n - Initial entry amount: ${risk_management.initial_amount}\n - max martingale level: {risk_management.martingale_levels}\n - Martingale multiplier: {risk_management.martingale_multiplier}\n - drawback threshol: {risk_management.drawback_threshold}\n - Timeframe: {risk_management.timeframe}\n\n-----use POST : /set_risk_management to change settings \n\n") #type: ignore
-                account_details = ACCOUNT_DETAILS(balance=balance,P_n_L_day= 0,lifespan=0)
-                break
-            else:
-                logger.error("FastAPI lifespan startup event: Failed to connect to Pocket Option client.")
-                logger.info("Attempting to reconnect...")
-                if _ >= 3:
-                    logger.error("Failed to reconnect to Pocket Option client after 3 attempts.")
-                    return
-                await api.reconnect() #type: ignore
-            await asyncio.sleep(5)
-    except Exception or KeyboardInterrupt as e:
-        logger.error(f"Failed to connect to Pocket Option client: {e}", exc_info=True)
-        broker_connected = False
-        yield
-        return   
+        entries = read_channel_entries(str(channels_file()))
+        broker_for_channel = broker_routes_for_channels(entries)
+    except Exception:
+        broker_for_channel = {}
+
+    signal_router = SignalRouter(broker_for_channel=broker_for_channel)
+
+    async def connect_startup_broker(broker_id: str) -> None:
+        try:
+            await ensure_broker_session(broker_id)
+            broker_adapter = await ensure_broker_connected(broker_id)
+            broker_balances[broker_id] = to_float(await broker_adapter.balance())
+            logger.info("Connected broker=%s for independent account and trade handling", broker_id)
+            resume_active_trades(broker_id)
+        except Exception as exc:
+            logger.error("Could not initialize %s; other brokers remain available: %s", broker_id, exc)
+
+    await asyncio.gather(*(connect_startup_broker(broker_id) for broker_id in BROKER_NAMES))
+    broker_connected = any(broker_is_connected(candidate) for candidate in BROKER_NAMES)
     asyncio.create_task(reset_P_n_L_day()) 
     telegram_listener = TelegramSignalListener.from_environment(handle_telegram_signal)
     if telegram_listener:
@@ -554,8 +1006,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await telegram_listener.stop()
     if telegram_listener_task:
         telegram_listener_task.cancel()
-    if api is not None:
-        await api.disconnect()
+    # Disconnect adapters
+    for b in broker_registry.values():
+        with contextlib.suppress(Exception):
+            await b.disconnect()
+    connected_brokers.clear()
     broker_connected = False
     return
 
@@ -567,7 +1022,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_middleware(QueueMiddleware, max_queue=0)
 
 
 class NoCacheUiMiddleware(BaseHTTPMiddleware):
@@ -589,7 +1043,7 @@ async def health() -> JSONResponse:
         status_code=status.HTTP_200_OK,
         content={
             "status": "ok",
-            "broker_connected": broker_connected,
+            "broker_connected": any(broker_is_connected(candidate) for candidate in BROKER_NAMES),
             "telegram_listener_enabled": telegram_listener is not None,
             "telegram_listener_connected": bool(
                 telegram_listener and telegram_listener.client and telegram_listener.client.is_connected()
@@ -600,6 +1054,37 @@ async def health() -> JSONResponse:
             ),
             "webhook_auth_configured": bool(webhook_secrets),
             "webhook": webhook_stats,
+        },
+    )
+
+@app.get("/broker_status", response_class=JSONResponse)
+async def get_broker_status() -> JSONResponse:
+    """Return independent broker readiness without exposing secrets."""
+    return JSONResponse(status_code=status.HTTP_200_OK, content=broker_status_payload())
+
+
+@app.post("/brokers/{broker_id}/connect", response_class=JSONResponse)
+async def connect_broker(broker_id: str) -> JSONResponse:
+    """Connect a configured broker for account reads; this endpoint never places orders."""
+    broker_id = normalise_broker_id(broker_id)
+    try:
+        broker = await ensure_broker_connected(broker_id)
+        balance = to_float(await broker.balance())
+    except Exception as exc:
+        logger.error("Could not connect %s from dashboard: %s", broker_id, exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Could not connect to {BROKER_NAMES[broker_id]}: {exc}",
+        ) from exc
+    broker_balances[broker_id] = balance
+    resume_active_trades(broker_id)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "broker_id": broker_id,
+            "account_type": broker_account_type(broker_id),
+            "balance": balance,
+            "connected": True,
         },
     )
 
@@ -632,106 +1117,153 @@ async def ui_styles():
     raise HTTPException(status_code=404, detail="styles.css not found")
 
 @app.get("/account_details", response_class=JSONResponse)
-async def get_account_details():
-    global api,account_details
-    balance = None
+async def get_account_details(broker_id: str):
+    broker_id = normalise_broker_id(broker_id)
     try:
-        balance = to_float(await api.balance())
-        if balance <= 0:
-            for retries in range(10):
-                await api.reconnect()
-                balance = to_float(await api.balance())
-                if balance > 0:
-                    break
-                if retries == 9:
-                    logger.error("Failed to reconnect and get a valid balance after 10 attempts.")
-        account_details.balance = balance
-    except Exception as e:
-        balance = "fetch failed"
-    P_n_L_day = account_details.P_n_L_day
-    lifespan  = account_details.lifespan
-    jsonResponse = JSONResponse(status_code= status.HTTP_200_OK,content={"balance": balance,"P_n_L_day": P_n_L_day, "lifespan": lifespan})
+        broker = await ensure_broker_connected(broker_id)
+        balance = to_float(await broker.balance())
+        broker_balances[broker_id] = balance
+    except Exception as exc:
+        logger.error("Could not read %s account details: %s", broker_id, exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Could not read {BROKER_NAMES[broker_id]} account details: {exc}",
+        ) from exc
+    P_n_L_day = broker_pnl(broker_id)
+    lifespan = broker_lifetime_pnl(broker_id)
+    jsonResponse = JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "broker_id": broker_id,
+            "broker_name": BROKER_NAMES[broker_id],
+            "account_type": broker_account_type(broker_id),
+            "balance": balance,
+            "P_n_L_day": P_n_L_day,
+            "lifespan": lifespan,
+        },
+    )
     return jsonResponse
 
 @app.get("/open_trades", response_class=JSONResponse)
-async def get_open_trades():
-    global api,risk_management,trade_details
-    # Ensure integer values are passed to get_candles (period and offset must be ints)
-        
-    try:
-        async with asyncio.timeout(10):
-            openTrades = await api.opened_deals()
-        # print(f"Fetched open trades: {openTrades}\n\n\n")
-        # # handle dict or list responses from the API
-        trades_list = []
-        for tid,data in openTrades.items(): #type: ignore
-            current_price = None
-            async with asyncio.timeout(10):  # Set a 3-second timeout
-                subscription = await api.subscribe_symbol(data.get("asset"),)
-                async for candle in subscription:
-                    print(f" Close: {candle['close']}")
-                    current_price=candle['close']
-                    print(f"Current price for {data.get('asset')}: {current_price}")
-                    break  # We only need the latest candle
-            trades_list.append({
-                "trade_id": data.get("id"),
-                "asset": data.get("asset"),
-                "amount": data.get("amount"),
-                "direction": trade_details[data.get("id")].direction if data.get("id") in trade_details else "-",
-                "profit": data.get("profit"),
-                "openedTime": data.get("openTime"),
-                "open_price": data.get("openPrice"),
-                # current_price may be non-serializable depending on API; include as-is and let caller handle
-                "current_price": current_price #type: ignore
-            })
-        # print(f"Compiled open trades list: {trades_list}")
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"open_trades": trades_list})
-    except (Exception, KeyboardInterrupt) as e:
-        logger.error(f"Error fetching open trades: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error fetching open trades: {e}")
+async def get_open_trades(broker_id: str):
+    broker_id = normalise_broker_id(broker_id)
+    trades_list = [
+        {
+            "trade_id": trade_id,
+            "broker_id": details.broker_id,
+            "asset": details.asset,
+            "amount": details.amount,
+            "direction": details.direction,
+            "profit": None,
+            "openedTime": details.entry_time.isoformat(),
+            "open_price": details.open_price,
+            "current_price": None,
+        }
+        for trade_id, details in trade_details.items()
+        if details.broker_id == broker_id
+    ]
+    return JSONResponse(status_code=status.HTTP_200_OK, content={"open_trades": trades_list})
 
 @app.get("/closed_trades")
-async def get_closed_trades():
-    global closed_trades
-    if len(closed_trades) >= 10:
-        closed_trades = dict(list(closed_trades.items())[-10:])
-    return JSONResponse(status_code=status.HTTP_200_OK, content={"closed_trades": closed_trades})
+async def get_closed_trades(broker_id: str):
+    broker_id = normalise_broker_id(broker_id)
+    matching = [
+        (trade_id, details)
+        for trade_id, details in closed_trades.items()
+        if details.get("broker_id") == broker_id
+    ]
+    trades = dict(matching)
+    return JSONResponse(status_code=status.HTTP_200_OK, content={"closed_trades": trades})
 
 @app.get("/current_signals", response_class=JSONResponse)
-async def get_current_signals():
-    global Signals
-    signals_get = Signals.copy()
-    logger.info(f"current Signals {signals_get}")
+async def get_current_signals(broker_id: str):
+    broker_id = normalise_broker_id(broker_id)
     signal_list = []
-    for signal_id, signal_details in signals_get.items(): #type: ignore
-        signal_list.append({
-            "signal_provider": signal_details.signal_provider,
-            "entry_time": str(signal_details.entry_time),
-            "direction": signal_details.direction,
-            "asset": signal_details.asset
-        })
+    for signal in get_runtime_state().recent_signals(limit=50):
+        if signal.get("broker_id") != broker_id:
+            continue
+        signal_list.append(signal)
+        if len(signal_list) == 20:
+            break
         
     return JSONResponse(status_code=status.HTTP_200_OK, content={"signals": signal_list})
 
 
     #
     # return JSONResponse(status_code= status.HTTP_200_OK,content={f"message:{Signals.get_signal(returnAll=True)}"})
-@app.post("/set_risk_management", response_class=JSONResponse  )
+@app.post("/set_risk_management", response_class=JSONResponse)
 async def set_risk_management(Risk: RISK_MANAGEMENT):
     global risk_management
     logger.info(f"Received risk management settings: {Risk}")
+    try:
+        persist_risk_settings(global_values=Risk)
+    except OSError as exc:
+        logger.error("Could not persist global risk settings: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not save global risk settings.",
+        ) from exc
     risk_management = Risk
     return JSONResponse(
         status_code=status.HTTP_200_OK,
         content={"message": "Risk management values updated", "risk_values": risk_management.model_dump()},
     )
+
+
+@app.put("/risk_management/brokers/{broker_id}", response_class=JSONResponse)
+async def set_broker_risk_override(
+    broker_id: str,
+    override: BROKER_RISK_OVERRIDE,
+) -> JSONResponse:
+    broker_id = normalise_broker_id(broker_id)
+    candidate = dict(risk_overrides)
+    values = override.model_dump(exclude_none=True)
+    if values:
+        candidate[broker_id] = values
+    else:
+        candidate.pop(broker_id, None)
+    try:
+        persist_risk_settings(overrides=candidate)
+    except OSError as exc:
+        logger.error("Could not persist %s risk overrides: %s", broker_id, exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Could not save {BROKER_NAMES[broker_id]} risk overrides.",
+        ) from exc
+    risk_overrides.clear()
+    risk_overrides.update(candidate)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "message": f"{BROKER_NAMES[broker_id]} risk overrides saved",
+            "broker_id": broker_id,
+            "overrides": values,
+            "effective_risk_values": effective_risk_management(broker_id).model_dump(),
+        },
+    )
+
+
 @app.get("/get_risk_management", response_class=JSONResponse)
-async def get_risk_management():
-    global risk_management
-    risk_management_values = {}
-    for key, value in risk_management.model_dump().items():
-        risk_management_values[key] = value        
-    return JSONResponse(status_code= status.HTTP_200_OK,content={"risk_values":risk_management_values})
+async def get_risk_management(broker_id: str | None = None):
+    selected_broker = normalise_broker_id(broker_id) if broker_id else None
+    effective = {
+        supported_id: effective_risk_management(supported_id).model_dump()
+        for supported_id in BROKER_NAMES
+    }
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "risk_values": (
+                effective[selected_broker]
+                if selected_broker
+                else risk_management.model_dump()
+            ),
+            "global_risk_values": risk_management.model_dump(),
+            "broker_overrides": risk_overrides,
+            "effective_risk_by_broker": effective,
+            "selected_broker_id": selected_broker,
+        },
+    )
 
 @app.get("/get_channels", response_class=JSONResponse)
 async def get_channels() -> JSONResponse:
@@ -818,6 +1350,10 @@ async def set_channels(request: Request) -> JSONResponse:
             detail=f"Could not write {path}: {exc}",
         )
 
+    if signal_router is not None:
+        signal_router.broker_for_channel = broker_routes_for_channels(
+            [channel_to_dict(config) for config in configs]
+        )
     reloaded, message = True, "Saved"
     if telegram_listener is not None:
         reloaded, message = await restart_telegram_listener()
@@ -855,57 +1391,85 @@ async def trade_signal_webhook(request: Request):
             content={"message": "Unauthorized: missing or invalid webhook secret."},
         )
 
-    if api is None:
-        webhook_stats["rejected"] += 1
-        webhook_stats["last_result"] = "broker_unavailable"
-        logger.error("Rejecting signal: broker client is not connected.")
-        return JSONResponse(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            content={"message": "Broker client is not connected; signal not processed."},
-        )
-
-    account_details.balance = to_float(await api.balance())
-    if account_details.P_n_L_day <= risk_management.drawback_threshold:
-        webhook_stats["rejected"] += 1
-        webhook_stats["last_result"] = "drawdown_halt"
-        logger.warning("P_n_L_day is below the threshold. Trade signal processing halted.")
-        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Trade signal processing halted due to P_n_L_day threshold."})
+    trade_data: SIGNAL | None = None
     try:
         trade_data = await parse_signal(text=raw_data)
-        if not trade_data:
-            #type: ignore
+        if trade_data is None:
             webhook_stats["rejected"] += 1
             webhook_stats["last_result"] = "invalid_signal"
             return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Invalid trade signal data."})
-        asyncio.create_task(take_trade(trade_data))#type: ignore
+        signal_details = trade_data.signal_details
+        broker_id = route_signal_to_broker(signal_details)
+        risk = effective_risk_management(broker_id)
+        broker = await ensure_broker_connected(broker_id)
+        balance = to_float(await broker.balance())
+        broker_balances[broker_id] = balance
+        if broker_pnl(broker_id) <= risk.drawback_threshold:
+            webhook_stats["rejected"] += 1
+            webhook_stats["last_result"] = "drawdown_halt"
+            logger.warning(
+                "Daily P/L for %s is below its effective threshold. Signal rejected.",
+                broker_id,
+            )
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={"message": "Trade signal processing halted due to P_n_L_day threshold."},
+            )
+        asyncio.create_task(take_trade(trade_data))
+    except HTTPException:
+        webhook_stats["rejected"] += 1
+        webhook_stats["last_result"] = "invalid_signal_route"
+        if trade_data is not None:
+            Signals.pop(trade_data.signal_id, None)
+        raise
     except (Exception,KeyboardInterrupt) as e:
         webhook_stats["rejected"] += 1
-        webhook_stats["last_result"] = "error"
+        webhook_stats["last_result"] = "broker_unavailable"
         logger.error(f"Error taking trade: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error taking trade: {e}")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"message": f"Broker unavailable or signal could not be routed: {e}"},
+        )
     webhook_stats["accepted"] += 1
     webhook_stats["last_result"] = "accepted"
     return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Trade signal received and processed successfully."})
     
 # Helper functions
-async def parse_signal(text:str = "")->SIGNAL|bool:
+async def parse_signal(
+    text: str = "", channel_config: ChannelConfig | None = None
+) -> SIGNAL | None:
     global risk_management,Signals
     #parse signal data
     parsed_data = parse_macrodroid_trade_data(text)
     logger.info(f"Parsed trade data: {parsed_data}")  
-    if not parsed_data.get("asset") or not parsed_data.get("direction") or not parsed_data.get("time") or not parsed_data.get("signal_provider") or not parsed_data.get("timezone"):
-        logger.error("Failed to parse essential trade data (asset, direction, entry time, signal provider, or timezone) from notification. Aborting trade attempt.")
-        return False
+    timezone = (
+        channel_config.timezone
+        if channel_config is not None
+        else parsed_data.get("timezone")
+    )
+    if not parsed_data.get("asset") or not parsed_data.get("direction") or not parsed_data.get("time") or not parsed_data.get("signal_provider") or not timezone:
+        logger.error("Failed to parse essential trade data (asset, direction, entry time, signal provider, or configured timezone) from notification. Aborting trade attempt.")
+        return None
     #assign parsed data to variables
-    asset_name_for_po = parsed_data["asset"]
-    direction = parsed_data["direction"]
-    entryTime = parsed_data["time"]
-    signal_provider = parsed_data["signal_provider"]
-    timezone = parsed_data["timezone"]
+    asset_name_for_po = str(parsed_data["asset"])
+    direction = str(parsed_data["direction"])
+    entryTime = str(parsed_data["time"])
+    signal_provider = str(parsed_data["signal_provider"])
+    timezone = str(timezone)
+    broker_id = (
+        channel_config.broker
+        if channel_config is not None
+        else parsed_data.get("broker")
+    )
+    channel_key = (
+        channel_config.key
+        if channel_config is not None
+        else parsed_data.get("channel")
+    )
     logger.info(f"\n\n -------Parsed trade data:----------\n--Asset: {asset_name_for_po}\n--Direction: {direction}\n--Entry Time: {entryTime}\n--Signal Provider: {signal_provider}\n--Timezone: {timezone}\n-----------------------------------\n\n ")
     # Validate direction
     if not direction.upper() in {"CALL", "PUT", "BUY", "SELL"}:
-        return False
+        return None
     # Convert entry time to local timezone
     LOCAL_TIMEZONE = pytz.timezone(str(risk_management.local_timezone))
     current_local_dt = datetime.now(LOCAL_TIMEZONE)
@@ -926,15 +1490,17 @@ async def parse_signal(text:str = "")->SIGNAL|bool:
         target_local_dt = signal_dt_in_signal_tz.astimezone(LOCAL_TIMEZONE)
     except (Exception, KeyboardInterrupt) as e:
         logger.error(f"Error parsing or converting signal entry time '{entryTime}': {e}", exc_info=True)
-        return False
+        return None
     logger.info(f"Signal entry time {signal_dt_in_signal_tz.tzinfo}: {entryTime}. Calculated local target entry time: {target_local_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     
     data = {
-        "signal_id":f"{signal_provider}|{entryTime}|{asset_name_for_po}",
+        "signal_id":f"{signal_provider}|{entryTime}|{asset_name_for_po}|{broker_id or channel_key or ''}",
         "signal_details":{"signal_provider": signal_provider,
         "asset":asset_name_for_po,
         "direction":direction,
-        "entry_time": target_local_dt
+        "entry_time": target_local_dt,
+        "broker_id": broker_id,
+        "channel_key": channel_key
             }
         }
     
@@ -944,10 +1510,21 @@ async def parse_signal(text:str = "")->SIGNAL|bool:
     try:
         if signal_data.signal_id not in Signals:
             await asyncio.sleep(random() * 10)  # Small delay to ensure proper logging order
+            saved = get_runtime_state().save_signal(
+                signal_data.signal_id,
+                "pending",
+                signal_data.signal_details.model_dump(mode="json"),
+            )
+            if not saved:
+                logger.warning(
+                    "Signal %s was already recorded and will not be placed again.",
+                    signal_data.signal_id,
+                )
+                return None
             Signals[signal_data.signal_id] = signal_data.signal_details
         else:
             logger.warning(f"Signal for {signal_data.signal_details.asset} {signal_data.signal_details.direction} at {signal_data.signal_details.entry_time} from {signal_data.signal_details.signal_provider} already exists. Skipping duplicate signal.")
-            return False
+            return None
     except (Exception,KeyboardInterrupt) as e:
             logger.error(f"Error placing trade for {signal_data.signal_details.asset} {signal_data.signal_details.direction}: {e}", exc_info=True)
             del signal_data
@@ -956,22 +1533,17 @@ async def parse_signal(text:str = "")->SIGNAL|bool:
                        f"Current local time: {current_local_dt.strftime('%d-%m-%Y %H:%M:%S')}, Target local time: {target_local_dt.strftime('%d-%m-%Y %H:%M:%S')}. "
                        f"Skipping trade.")
             Signals.pop(signal_data.signal_id)
-            return False
+            return None
     return signal_data
     
 async def take_trade(signal:SIGNAL):
-    global risk_management,api,trade_details,Signals
+    global trade_details,Signals,signal_router
         # Place the initial trade
     current_local_dt = datetime.now(pytz.timezone(str(risk_management.local_timezone)))
     active_trade_id: str | None = None
     try:
-        #check entry status of trade_data        
         signal_data = signal.signal_details
-        allowed, reason = can_start_sequence(signal_data.signal_provider, signal_data.asset)
-        if not allowed:
-            risk_rejection(reason)
-            Signals.pop(signal.signal_id, None)
-            return
+        broker_id = route_signal_to_broker(signal_data)
         time_to_wait_seconds = (signal_data.entry_time - current_local_dt- timedelta(milliseconds=0)).total_seconds()
         if time_to_wait_seconds > 0:
             logger.info(f"Waiting {time_to_wait_seconds:.2f} seconds until target entry time: {signal_data.entry_time.strftime('%H:%M:%S')}")
@@ -979,27 +1551,62 @@ async def take_trade(signal:SIGNAL):
         else:
             logger.info(f"Signal arrived exactly at or slightly past target entry time ({current_local_dt.strftime('%H:%M:%S')} vs {signal_data.entry_time.strftime('%H:%M:%S')}). Placing trade immediately.")        
         try:
-            signal_direction = signal_data.direction
-            broker_asset = signal_data.asset if signal_data.asset.lower().endswith("_otc") else f"{signal_data.asset}_otc"
-            if signal_direction.upper() == "BUY" or signal_direction.upper() == "CALL": #type: ignore
-                (buy_id, Details) = await api.buy(
-                    asset=broker_asset,
-                    amount= risk_management.initial_amount, 
-                    time= risk_management.timeframe,
-                    check_win=False )
-            elif signal_direction.upper() == "SELL" or signal_direction.upper() == "PUT":
-                (buy_id, Details) = await api.sell(
-                    asset=broker_asset,
-                    amount= risk_management.initial_amount, 
-                    time= risk_management.timeframe, 
-                    check_win=False )
-            else:
-                raise ValueError(f"Unsupported trade direction: {signal_direction!r}")
+            direction_raw = signal_data.direction
+            normalized_dir = "CALL" if direction_raw.upper() in {"BUY", "CALL"} else "PUT"
+
+            broker_asset = (
+                signal_data.asset
+                if signal_data.asset.lower().endswith("_otc")
+                else f"{signal_data.asset}_otc"
+            )
+
+            risk = effective_risk_management(broker_id)
+            broker_adapter = await ensure_broker_connected(broker_id)
+            balance = to_float(await broker_adapter.balance())
+            broker_balances[broker_id] = balance
+            if broker_pnl(broker_id) <= risk.drawback_threshold:
+                risk_rejection(
+                    f"{broker_id} daily P/L {broker_pnl(broker_id)} reached "
+                    f"drawback threshold {risk.drawback_threshold}"
+                )
+                get_runtime_state().set_signal_status(signal.signal_id, "rejected")
+                Signals.pop(signal.signal_id, None)
+                return
+            allowed, reason = can_start_sequence(
+                signal_data.signal_provider,
+                signal_data.asset,
+                broker_id=broker_id,
+                risk=risk,
+            )
+            if not allowed:
+                risk_rejection(reason)
+                get_runtime_state().set_signal_status(signal.signal_id, "rejected")
+                Signals.pop(signal.signal_id, None)
+                return
+
+            get_runtime_state().set_signal_status(signal.signal_id, "placing")
+            placement = await broker_adapter.place_call_put(
+                asset=broker_asset,
+                direction=normalized_dir,
+                amount=risk.initial_amount,
+                timeframe_seconds=risk.timeframe,
+                check_win=False,
+            )
+            buy_id = placement.trade_id
+
+            # Reconstruct Details shape to preserve existing downstream code.
+            Details = {
+                "asset": placement.asset,
+                "openPrice": placement.open_price,
+                "openTime": placement.entry_time.strftime("%Y-%m-%d %H:%M:%S"),
+                "amount": placement.amount,
+            }
         except (Exception,KeyboardInterrupt) as e:
             logger.error(
-                "Error placing %s trade for %s at %s: %s",
-                signal_data.direction, broker_asset, signal_data.entry_time, e, exc_info=True,
+                "Error placing trade for %s at %s: %s",
+                signal_data.asset, signal_data.entry_time, e, exc_info=True,
             )
+            get_runtime_state().set_signal_status(signal.signal_id, "needs_review")
             Signals.pop(signal.signal_id, None)
             return
         
@@ -1012,160 +1619,181 @@ async def take_trade(signal:SIGNAL):
         "entry_time": datetime.strptime(Details["openTime"], "%Y-%m-%d %H:%M:%S"),
         "level":0,
         "open_price":Details["openPrice"],
+        "broker_id":broker_id,
+        "signal_id":signal.signal_id,
         "amount":to_float(Details.get("amount"))
             }
         }
         
         trade = TRADE(**data)
         active_trade_id = trade.trade_id
-        await asyncio.sleep(random() * 10) 
         logger.info(f"trade details: {trade.trade_details}")
         trade_details[trade.trade_id] = trade.trade_details
-        # try:
+        get_runtime_state().save_active_trade(
+            trade.trade_id,
+            trade.trade_details.model_dump(mode="json"),
+            signal_id=signal.signal_id,
+        )
         trade_results = await manage_martingale(trade=trade)
         if trade_results:
             logger.info(f"Signal for {trade.trade_details.signal_provider} at {signal_data.entry_time} was a success")
-            Signals.pop(signal.signal_id)
-            del signal_data
-            del signal
         else:
             logger.info(f"Signal for {trade.trade_details.signal_provider} at {signal_data.entry_time}  Failed")
-            Signals.pop(signal.signal_id)
-            del signal_data
-            del signal
+        Signals.pop(signal.signal_id, None)
             
     except(Exception,KeyboardInterrupt) as e:
             logger.error("Trade sequence failed for %s: %s", signal.signal_id, e, exc_info=True)
             Signals.pop(signal.signal_id, None)
-            if active_trade_id:
-                trade_details.pop(active_trade_id, None)
+            if active_trade_id is None:
+                with contextlib.suppress(KeyError):
+                    get_runtime_state().set_signal_status(signal.signal_id, "failed")
             return
 
     
 async def manage_martingale(trade:TRADE)-> bool:
-    global api,risk_management,account_details,trade_details,closed_trades
+    global trade_details,closed_trades,signal_router
     current_trade = trade.trade_details
+    broker_id = current_trade.broker_id
+    risk = effective_risk_management(broker_id)
     logger.info(f"waiting for trade to end: {trade.trade_id}")
     logger.info(f"current trade details: {current_trade}")
     try:
-        status = await api.check_win(trade.trade_id)
-        result = status["result"]
+        broker_adapter = await ensure_broker_connected(broker_id)
+        result_details = await broker_adapter.check_result(trade.trade_id)
+        result = normalize_trade_result(
+            result_details.get("result")
+            or result_details.get("status")
+        )
     except (Exception,KeyboardInterrupt) as e:
-        logger.error(f"Error checking trade result for {trade.trade_id}: {e}", exc_info=True)
-        server_details = await api.closed_deals()
-        await asyncio.sleep(random() * 10) 
-        closed_trades[trade.trade_id] = {
-            "trade_details":{
-            "direction":current_trade.direction,
-            "asset":current_trade.asset,
-            "amount":current_trade.amount,
-            "level":current_trade.level,
-            "signal_provider":current_trade.signal_provider,
-            "result":"unknown",
-            "entry_time":current_trade.entry_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "open_price":current_trade.open_price},
-            "from_server":str(server_details.get(trade.trade_id, {})) #type: ignore
-            }
-        trade_details.pop(trade.trade_id)
-        del current_trade
-        del trade
+        logger.error(
+            f"Error checking trade result for {trade.trade_id}: {e}",
+            exc_info=True,
+        )
+        finalize_trade(
+            trade.trade_id,
+            trade_history_payload(current_trade, "unknown", {}),
+            signal_id=current_trade.signal_id,
+        )
         return False
-    logger.info(status)
-    if result.upper() == "LOSS":
-        loss_amount = to_float(status.get("amount"))
-        account_details.P_n_L_day -= loss_amount
-        account_details.lifespan -= loss_amount
-        if not risk_management.martingale_enabled:
+    logger.info("Trade result for %s from %s: %s", trade.trade_id, broker_id, result_details)
+    if result == "UNKNOWN":
+        logger.error(
+            "Broker returned an unknown result for %s; ending the sequence without "
+            "recording a win or placing a recovery trade.",
+            trade.trade_id,
+        )
+        finalize_trade(
+            trade.trade_id,
+            trade_history_payload(current_trade, "Unknown", result_details),
+            signal_id=current_trade.signal_id,
+        )
+        return False
+    if result == "LOSS":
+        loss_amount = to_float(result_details.get("amount", current_trade.amount))
+        record_broker_pnl(broker_id, -loss_amount, f"{trade.trade_id}:loss")
+        if not risk.martingale_enabled:
             logger.info("Martingale is disabled; ending sequence after loss %s", trade.trade_id)
-            trade_details.pop(trade.trade_id, None)
+            finalize_trade(
+                trade.trade_id,
+                trade_history_payload(current_trade, "Loss", result_details),
+                signal_id=current_trade.signal_id,
+            )
             return False
         current_trade.level = current_trade.level + 1
-        if current_trade.level > risk_management.martingale_levels:
+        if current_trade.level > risk.martingale_levels:
             logger.warning(f"Max martingale levels reached for trade {trade.trade_id}. Ending martingale sequence.")
-            await asyncio.sleep(random() * 10) 
-            server_details = await api.closed_deals()
-            closed_trades[trade.trade_id] = {
-            "trade_details":{
-            "direction":current_trade.direction,
-            "asset":current_trade.asset,
-            "amount":current_trade.amount/risk_management.martingale_multiplier,
-            "level":current_trade.level-1,
-            "signal_provider":current_trade.signal_provider,
-            "result":"Loss",
-            "entry_time":current_trade.entry_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "open_price":current_trade.open_price},
-            "from_server":str(server_details.get(trade.trade_id, {})) #type: ignore
-            }
-            trade_details.pop(trade.trade_id)
-            del current_trade
-            del trade
+            finalize_trade(
+                trade.trade_id,
+                trade_history_payload(
+                    current_trade,
+                    "Loss",
+                    result_details,
+                    amount=current_trade.amount / risk.martingale_multiplier,
+                    level=current_trade.level - 1,
+                ),
+                signal_id=current_trade.signal_id,
+            )
             return False
-        logger.info(f"Trade {trade.trade_id} lost. Initiating martingale sequence. level: {int(current_trade.level)}")#type: ignore
-        new_amount = current_trade.amount * risk_management.martingale_multiplier
+        logger.info(
+            f"Trade {trade.trade_id} lost. Initiating martingale sequence. level: {int(current_trade.level)}"
+        )
+        new_amount = current_trade.amount * risk.martingale_multiplier
+        broker_adapter = await ensure_broker_connected(broker_id)
+        balance = to_float(await broker_adapter.balance())
+        broker_balances[broker_id] = balance
         allowed, reason = can_start_trade(
             new_amount,
             current_trade.signal_provider,
             current_trade.asset,
             exclude_trade_id=trade.trade_id,
             is_recovery=True,
+            broker_id=broker_id,
+            risk=risk,
+            balance=balance,
         )
         if not allowed:
             risk_rejection(reason)
             logger.warning("Stopping martingale sequence for %s", trade.trade_id)
-            trade_details.pop(trade.trade_id, None)
+            finalize_trade(
+                trade.trade_id,
+                trade_history_payload(
+                    current_trade,
+                    "Loss",
+                    result_details,
+                    amount=current_trade.amount,
+                    level=current_trade.level - 1,
+                ),
+                signal_id=current_trade.signal_id,
+            )
             return False
         current_trade.amount = new_amount
         logger.info(f"Placing martingale trade level {current_trade.level} for amount: ${new_amount}")
+        store = get_runtime_state()
         try:
-            if current_trade.direction.upper() == "BUY" or current_trade.direction.upper() == "CALL": #type: ignore
-                (buy_id, Details) = await api.buy(
-                    asset=current_trade.asset, 
-                    amount= new_amount, 
-                    time= risk_management.timeframe, 
-                    check_win=False )
-            elif current_trade.direction.upper() == "SELL" or current_trade.direction.upper() == "PUT":
-                (buy_id, Details) = await api.sell(
-                    asset=current_trade.asset, 
-                    amount= new_amount, 
-                    time= risk_management.timeframe, 
-                    check_win=False )
+            store.set_active_trade_state(
+                trade.trade_id,
+                "placing",
+                current_trade.model_dump(mode="json"),
+            )
+        except KeyError:
+            store.save_active_trade(
+                trade.trade_id,
+                current_trade.model_dump(mode="json"),
+                state="placing",
+                signal_id=current_trade.signal_id,
+            )
+        if current_trade.signal_id:
+            store.set_signal_status(current_trade.signal_id, "placing")
+        try:
+            normalized_dir = "CALL" if current_trade.direction.upper() in {"BUY", "CALL"} else "PUT"
+            placement = await broker_adapter.place_call_put(
+                asset=current_trade.asset,
+                direction=normalized_dir,
+                amount=new_amount,
+                timeframe_seconds=risk.timeframe,
+                check_win=False,
+            )
+            buy_id = placement.trade_id
+            Details = {
+                "asset": placement.asset,
+                "openPrice": placement.open_price,
+                "openTime": placement.entry_time.strftime("%Y-%m-%d %H:%M:%S"),
+                "amount": placement.amount,
+            }
         except (Exception,KeyboardInterrupt) as e:
             logger.error(f"Error placing martingale trade for {current_trade.asset} {current_trade.direction}: {e}", exc_info=True)
-            await asyncio.sleep(random() * 10) 
-            server_details = await api.closed_deals()
-            closed_trades[trade.trade_id] = {
-            "trade_details":{
-            "direction":current_trade.direction,
-            "asset":current_trade.asset,
-            "amount":current_trade.amount/risk_management.martingale_multiplier,
-            "level":current_trade.level-1,
-            "signal_provider":current_trade.signal_provider,
-            "result":"Loss",
-            "entry_time":current_trade.entry_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "open_price":current_trade.open_price},
-            "from_server":str(server_details.get(trade.trade_id, {})) #type: ignore
-            }
-            account_details.P_n_L_day = float(account_details.P_n_L_day) - current_trade.amount
-            account_details.lifespan = float(account_details.lifespan) - current_trade.amount
-            trade_details.pop(trade.trade_id)
-            del current_trade
-            del trade
+            store.set_active_trade_state(
+                trade.trade_id,
+                "needs_review",
+                current_trade.model_dump(mode="json"),
+            )
+            if current_trade.signal_id:
+                store.set_signal_status(current_trade.signal_id, "needs_review")
+            trade_details.pop(trade.trade_id, None)
             return False
-        logger.info(f"\n\n======Martingale Trade placed successfully.=======\n -Trade ID: {buy_id}\n-Details: {Details}\n\n")
-        await asyncio.sleep(random() * 10) 
-        server_details = await api.closed_deals()
-        closed_trades[trade.trade_id] = {
-            "trade_details":{
-            "direction":current_trade.direction,
-            "asset":current_trade.asset,
-            "amount":current_trade.amount/risk_management.martingale_multiplier,
-            "level":current_trade.level-1,
-            "signal_provider":current_trade.signal_provider,
-            "result":"Loss",
-            "entry_time":current_trade.entry_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "open_price":current_trade.open_price},
-            "from_server":str(server_details.get(trade.trade_id, {})) #type: ignore
-            }
+        logger.info(
+            f"\n\n======Martingale Trade placed successfully.=======\n -Trade ID: {buy_id}\n-Details: {Details}\n\n"
+        )
         data = {
         "trade_id":buy_id,
         "trade_details":{"signal_provider": current_trade.signal_provider,
@@ -1174,49 +1802,53 @@ async def manage_martingale(trade:TRADE)-> bool:
         "entry_time": datetime.strptime(Details["openTime"], "%Y-%m-%d %H:%M:%S"),
         "level":current_trade.level,
         "open_price":Details["openPrice"],
+        "broker_id":broker_id,
+        "signal_id":current_trade.signal_id,
         "entry_id":buy_id,
         "amount":to_float(Details.get("amount"))
             }
         }
-        trade_details.pop(trade.trade_id)
-        trade = TRADE(**data)
+        next_trade = TRADE(**data)
+        closed_payload = trade_history_payload(
+            current_trade,
+            "Loss",
+            {},
+            amount=current_trade.amount / risk.martingale_multiplier,
+            level=current_trade.level - 1,
+        )
+        store.roll_active_trade(
+            trade.trade_id,
+            next_trade.trade_id,
+            next_trade.trade_details.model_dump(mode="json"),
+            closed_payload,
+            signal_id=current_trade.signal_id,
+        )
+        closed_trades[trade.trade_id] = closed_payload
+        trade_details.pop(trade.trade_id, None)
+        trade = next_trade
         trade_details[trade.trade_id] = trade.trade_details
         status_results = await manage_martingale(trade=trade)
         return status_results
     else:
-        profit = to_float(status.get("profit"))
-        logger.info(f"Trade {trade.trade_id} won or tied. Martingale sequence completed.")
+        profit = to_float(result_details.get("profit", result_details.get("pnl", 0)))
+        result_label = "Draw" if result == "DRAW" else "Won"
+        logger.info("Trade %s ended with %s; martingale sequence completed.", trade.trade_id, result_label)
         print(f"==trade result==\n -Asset:{current_trade.asset}\n -lastest amount: {current_trade.amount}\n -martingale level: {current_trade.level}\n -profit/loss: {profit}\n")
-        await asyncio.sleep(random() * 10) 
-        server_details = await api.closed_deals()
-        closed_trades[trade.trade_id] = {
-            "trade_details":{
-            "direction":current_trade.direction,
-            "asset":current_trade.asset,
-            "amount":current_trade.amount,
-            "level":current_trade.level,
-            "signal_provider":current_trade.signal_provider,
-            "result":"Won",
-            "entry_time":current_trade.entry_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "open_price":current_trade.open_price},
-            "from_server":str(server_details.get(trade.trade_id, {})) #type: ignore
-            }
-        trade_details.pop(trade.trade_id)
-        del current_trade
-        del trade
-        account_details.P_n_L_day += profit
-        account_details.lifespan += profit
+        record_broker_pnl(broker_id, profit, f"{trade.trade_id}:settlement")
+        finalize_trade(
+            trade.trade_id,
+            trade_history_payload(current_trade, result_label, result_details),
+            signal_id=current_trade.signal_id,
+        )
         return True
     
 async def reset_P_n_L_day():
-    
-    global account_details
+    global broker_pnl_today
     while True:
         now = datetime.now(pytz.timezone(risk_management.local_timezone))
         next_reset = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
         wait_seconds = (next_reset - now).total_seconds()
         await asyncio.sleep(wait_seconds)
-        account_details.P_n_L_day = 0
-
-
-
+        daily, _ = get_runtime_state().pnl_totals(local_trading_date())
+        broker_pnl_today.clear()
+        broker_pnl_today.update(daily)

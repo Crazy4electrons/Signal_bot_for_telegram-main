@@ -88,6 +88,8 @@ def parse_macrodroid_trade_data(text: str) -> dict[str, str | None]:
     direction_match = re.search(r"\b(buy|sell|call|put)\b", text, re.IGNORECASE)
     provider_match = re.search(r"signal_provider\s*=\s*[\"']([^\"']+)[\"']", text, re.IGNORECASE)
     timezone_match = re.search(r"timezone\s*=\s*[\"']([^\"']+)[\"']", text, re.IGNORECASE)
+    broker_match = re.search(r"broker\s*=\s*[\"']?([A-Za-z_-]+)[\"']?", text, re.IGNORECASE)
+    channel_match = re.search(r"channel\s*=\s*[\"']?([^\"'\s,]+)[\"']?", text, re.IGNORECASE)
 
     asset = None
     if asset_match:
@@ -107,6 +109,8 @@ def parse_macrodroid_trade_data(text: str) -> dict[str, str | None]:
         "direction": direction,
         "signal_provider": provider_match.group(1).strip() if provider_match else None,
         "timezone": timezone_match.group(1).strip() if timezone_match else None,
+        "broker": broker_match.group(1).strip().lower().replace("-", "_") if broker_match else None,
+        "channel": channel_match.group(1).strip() if channel_match else None,
     }
 
 # --- Testing with your Example ---

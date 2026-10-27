@@ -1,9 +1,8 @@
-# Pocket Option Signal Bot
+# Signal Execution Desk
 
-Receives binary-options trading signals from a Telegram channel (via MacroDroid or a direct
-Telegram listener), parses them, and places trades on Pocket Option through an async broker
-client. Includes a local dashboard, martingale recovery with hard risk limits, and webhook
-authentication.
+Receives binary-options trading signals from Telegram (via MacroDroid or a direct Telegram
+listener), parses them, and routes them to Pocket Option or Quotex. Includes a local dashboard,
+martingale recovery with hard risk limits, and webhook authentication.
 
 > **Risk warning.** Binary options are high risk and are restricted or prohibited for retail
 > clients in several jurisdictions (for example, ESMA prohibits them for EU retail clients).
@@ -20,7 +19,7 @@ authentication.
 - [Requirements](#requirements)
 - [Install](#install)
 - [Configuration](#configuration)
-- [Capturing the Pocket Option session](#capturing-the-pocket-option-session)
+- [Capturing broker sessions](#capturing-broker-sessions)
 - [Running in development](#running-in-development)
 - [Running as a service (survives restarts)](#running-as-a-service-survives-restarts)
 - [Webhook transport (stable public URL)](#webhook-transport-stable-public-url)
@@ -67,11 +66,11 @@ Both paths feed the same parser and the same trade coordinator.
 | --- | --- |
 | `main.py` | FastAPI app: lifecycle, endpoints, signal validation, trade lifecycle, martingale, risk limits, webhook auth. |
 | `parse_data.py` | Parses the signal text shared by MacroDroid and Telegram. Normalises `BUY`/`CALL` to `CALL` and `SELL`/`PUT` to `PUT`. |
-| `playwright_scraper.py` | Captures the Pocket Option session (`ssid`) by attaching to a headed Edge profile. Run once, refresh when the session expires. |
+| `playwright_scraper.py` | Captures Pocket Option or Quotex sessions using Cloudscraper and headed/headless Edge. |
 | `telegram_listener.py` | Optional direct Telegram channel listener (MTProto user session). Reads every channel in `channels.json`. |
 | `telegram_login.py` | Interactive login that creates the Telegram session file. Also called automatically by `fetch_channels.py`. |
 | `fetch_channels.py` | Lists the channels the account can read and can append them to `channels.json`. |
-| `test.py` | Interactive helper that posts a synthetic signal to `POST /trade_signal`. |
+| `test.py` | DEMO-only test-signal sender for `POST /trade_signal`; requires explicit confirmation. |
 | `ui/` | Static dashboard (`index.html`, `script.js`, `styles.css`), plus `fonts/` (self-hosted Archivo and IBM Plex Mono, so the desk renders offline) and `favicon.svg`. |
 | `Macrodroid/MacroDroid.mdr` | MacroDroid export containing the macros, variables, and widgets. |
 | `Macrodroid/README.md` | MacroDroid import and configuration guide. |
@@ -84,7 +83,7 @@ Both paths feed the same parser and the same trade coordinator.
 
 - Python 3.13+
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
-- Microsoft Edge (only needed to capture or refresh the Pocket Option session)
+- Microsoft Edge (used for browser-based broker session capture or fallback)
 - A tunnel that provides a **stable** public URL (see [Webhook transport](#webhook-transport-stable-public-url))
 - A Pocket Option account and an Android phone running MacroDroid, unless you use the direct Telegram listener
 
@@ -117,12 +116,25 @@ pip install -r requirements.txt
 ## Configuration
 
 Application settings live in `.env`. Never commit that file; it holds your broker session.
-Channel IDs and per-channel timezones live in `channels.json` instead, so the same list can be
-copied to another host without touching `.env`.
+Channel IDs, required per-channel timezones, and broker destinations live in `channels.json`.
+Global risk defaults and sparse per-broker overrides are saved to `risk_settings.json` by default.
 
 | Key | Required | Description |
 | --- | --- | --- |
-| `ssid` | Yes | Pocket Option session string. Captured by `playwright_scraper.py`. Expires, and must be refreshed. |
+| `POCKETOPTION_SSID` | Required for Pocket trading | Pocket Option session frame captured by `playwright_scraper.py`. |
+| `POCKETOPTION_EMAIL` / `POCKETOPTION_PASSWORD` | No | Optional credentials for Cloudscraper/browser login during session capture. |
+| `POCKETOPTION_ACCOUNT_TYPE` | No | `DEMO` or `REAL`; default `DEMO`. |
+| `POCKETOPTION_SCRAPER_HEADLESS` | No | Browser fallback visibility; default `false`. |
+| `QUOTEX_SSID` | No | Saved authorization frame used when `QUOTEX_BROWSER_SESSION=false`. |
+| `QUOTEX_EMAIL` / `QUOTEX_PASSWORD` | No | Credentials for the fork's login flow when `QUOTEX_BROWSER_SESSION=false`. |
+| `QUOTEX_ACCOUNT_TYPE` | No | `DEMO` or `REAL`; default `DEMO`. |
+| `QUOTEX_IS_DEMO` | No | Quotex demo/live setting used by the API adapter; default `true`. |
+| `QUOTEX_LANG` / `QUOTEX_REGIONS` | No | Login language and optional comma-separated API region names. |
+| `QUOTEX_BROWSER_SESSION` | No | Use the persistent Playwright Edge profile for Quotex authorization; default `true`. Set `false` to use the fork's native saved-session flow. |
+| `QUOTEX_PLAYWRIGHT_PROFILE` | No | Persistent browser profile directory; default `data/quotex-playwright` relative to the project, independent of the launch working directory. |
+| `QUOTEX_BROWSER_HEADLESS` | No | Run the app's persistent browser headless; default `false` so sign-in/CAPTCHA can be completed visibly. |
+| `QUOTEX_BROWSER_AUTH_TIMEOUT` | No | Seconds to wait for browser authorization; default `120`. |
+| `QUOTEX_SCRAPER_HEADLESS` | No | Browser visibility for standalone session capture; default `false`. |
 | `WEBHOOK_SECRET` | Yes when exposed | Shared secret required by `POST /trade_signal`. |
 | `WEBHOOK_SECRET_AUTOGENERATE` | No | `true` generates `WEBHOOK_SECRET` once on first start and saves it to `.env` with mode `0600`. |
 | `WEBHOOK_SECRET_PREVIOUS` | No | Old secret accepted during a rotation window. |
@@ -131,17 +143,22 @@ copied to another host without touching `.env`.
 | `TELEGRAM_CHANNELS_FILE` | No | JSON file listing the channels to read. Default `channels.json`. |
 | `TELEGRAM_SESSION_PATH` | No | Telegram session file location. Default `data/telegram_signal_bot`. |
 | `TELEGRAM_SIGNAL_PROVIDER` | No | Default provider label when a channel does not set one. Default `telegram`. |
-| `SIGNAL_TIMEZONE` | No | Default timezone when a channel does not set one. Default `Etc/GMT-2`. |
-| `SIGNAL_BOT_STATE_PATH` | No | SQLite file used for message deduplication. Default `data/signal_bot.sqlite3`. |
+| `SIGNAL_TIMEZONE` | No | Legacy fallback used when enriching messages; every configured Telegram channel must set its own timezone. |
+| `RISK_SETTINGS_FILE` | No | Persistent JSON file for global risk settings and per-broker overrides. Default `risk_settings.json`. |
+| `SIGNAL_BOT_STATE_PATH` | No | SQLite file for Telegram deduplication and persistent runtime state. Defaults to `signal_bot.sqlite3` if unset; `.env.example` sets `data/signal_bot.sqlite3`. |
 | `EDGE_BINARY` | No | Path to the Edge binary, if auto-detection fails. |
-| `POCKETOPTION_PLAYWRIGHT_PROFILE` | No | Persistent Edge profile used for session capture. |
+| `POCKETOPTION_PLAYWRIGHT_PROFILE` / `QUOTEX_PLAYWRIGHT_PROFILE` | No | Per-broker persistent Edge profiles used for session capture. |
 | `MARTINGALE_ENABLED` | No | `false` disables recovery trades after a loss. |
 | `MAX_TRADE_AMOUNT` | No | Hard cap on a single trade amount. |
 | `MAX_SEQUENCE_EXPOSURE` | No | Worst-case total risked across an entire martingale sequence. |
 | `MAX_OPEN_TRADES` | No | Maximum concurrent open trades. |
 | `MIN_BALANCE_RESERVE` | No | Balance floor that must remain after placing a new sequence's first trade. |
 
-Risk values may also be updated at runtime through `POST /set_risk_management`.
+Global risk defaults may be updated at runtime through `POST /set_risk_management`. Per-broker
+overrides are sparse: each blank field inherits the global value, and saving all blank fields removes
+that broker's override. The effective profile is used for the broker's initial order, drawdown stop,
+sequence exposure, concurrency checks, and every recovery order. Open-sequence caps are scoped to
+that broker account.
 
 ### Channel list (`channels.json`)
 
@@ -149,8 +166,9 @@ Risk values may also be updated at runtime through `POST /set_risk_management`.
 {
   "channels": [
     {"name": "primary", "channel": "-1003559202666", "timezone": "Etc/GMT-2",
-     "provider": "telegram", "enabled": true},
-    {"channel": "@another_channel", "timezone": "Etc/GMT+4"}
+     "broker": "quotex", "provider": "telegram", "enabled": true},
+    {"name": "backup", "channel": "@another_channel", "timezone": "Etc/GMT+4",
+     "broker": "pocket_option", "enabled": true}
   ]
 }
 ```
@@ -158,7 +176,8 @@ Risk values may also be updated at runtime through `POST /set_risk_management`.
 | Field | Required | Description |
 | --- | --- | --- |
 | `channel` | Yes | Numeric id (`-100…`) or username (`@name`). |
-| `timezone` | No | The offset that channel posts in, as an `Etc/GMT` name. Falls back to `SIGNAL_TIMEZONE`. |
+| `timezone` | Yes | The offset that channel posts in, as an `Etc/GMT` name. |
+| `broker` | Yes | `quotex` or `pocket_option`. Telegram channel configuration takes precedence over broker hints in message text. |
 | `provider` | No | Provider label for that channel's signals. Falls back to `TELEGRAM_SIGNAL_PROVIDER`. |
 | `name` | No | Friendly label used in logs, `/health`, and deduplication. Defaults to `channel`. |
 | `enabled` | No | `false` skips the channel. Default `true`. |
@@ -168,14 +187,15 @@ signal parser reads the numeric offset from the end of the string, so a named zo
 `Europe/Berlin` is rejected at load rather than failing on every signal. Remember the inversion:
 `Etc/GMT-2` means **GMT+2**.
 
-All channels share one Telegram session and are polled by a single client. Add as many entries as
+All channels share one Telethon user session and are polled by a single client. Add as many entries as
 you like — the file is plain text and contains no secrets, so it can be version-controlled or copied
 to another host. Set `TELEGRAM_CHANNELS_FILE` to keep it somewhere else. If the file is missing, the
-legacy `TELEGRAM_SOURCE_CHANNEL` / `SIGNAL_TIMEZONE` / `TELEGRAM_SIGNAL_PROVIDER` variables are used
-exactly as before.
+legacy `TELEGRAM_SOURCE_CHANNEL` is surfaced as an incomplete entry until its timezone and broker are
+selected in the dashboard.
 
-Entries are validated as they load. A `timezone` that pytz does not recognise, an entry with no
-`channel`, or the same channel listed twice is **skipped and logged at startup**, and reported under
+Entries are validated as they load. A missing timezone or broker, a `timezone` that pytz does not
+recognise, an entry with no `channel`, or the same channel listed twice is **skipped and logged at
+startup**, and reported under
 `telegram_channel_problems` in `GET /health`. The bot keeps running and the other channels keep
 working, and a mistyped timezone can never cause a trade at the wrong time. A file that cannot be
 parsed at all (bad JSON) is still a hard error.
@@ -217,7 +237,7 @@ The **Signal channels** panel on the dashboard lists every stored entry and edit
 CLI and the UI never disagree. Each row shows its state, the offset in the form the channel posts in,
 the provider label, and the last message id the listener has seen.
 
-- **Add channel** opens a sheet for the id, label, provider, timezone and on/off state.
+- **Add channel** opens a sheet for the id, label, provider, required timezone, broker destination and on/off state.
 - **Edit** re-opens that sheet; **Delete** lives inside it and asks once.
 - **Pause** / **Resume** flips `enabled` without touching the other fields.
 
@@ -232,25 +252,39 @@ proxy rather than opening it to the internet.
 
 ---
 
-## Capturing the Pocket Option session
+## Capturing broker sessions
 
-The broker client authenticates with an `ssid`, which is derived from an authenticated browser
-session. Pocket Option blocks scripted login, so you log in **manually once** in a dedicated Edge
-profile and the script captures the session from the live browser.
+The shared scraper is available for manual broker session capture. Pocket Option sessions are taken
+from its live websocket `auth` frame; Quotex sessions can be captured from the authenticated page's
+authorization frame. The running app uses the Quotex fork's saved-session and native WebSocket login
+flow by default; it does not need to keep the standalone scraper or a browser window open.
 
 ```bash
-uv run python playwright_scraper.py --account-type DEMO --timeout 120
+uv run python playwright_scraper.py --broker pocket_option --account-type DEMO --headed
+uv run python playwright_scraper.py --broker quotex --account-type DEMO --headed
 ```
 
-1. A headed Edge window opens with a persistent profile under `data/pocketoption-playwright`.
-2. Log in to Pocket Option manually and open the cabinet.
-3. The script captures the session and writes `ssid`, `UID`, and `ACCOUNT_TYPE` to `.env`.
+Use `--headless` to compare without displaying the browser. Command options `--email` and
+`--password` can provide credentials; otherwise the script reads broker-prefixed `.env` values and
+prompts interactively for any missing broker, account type, email, or password. Password prompts are
+masked. For service startup, `main.py` never prompts for credentials and initializes each broker
+independently, leaving the other broker available if one connection fails. Pocket Option uses its
+saved session from `.env`; Quotex uses the existing persistent Edge profile at
+`data/quotex-playwright` by default to capture server-confirmed authorization frames, then maintains
+the broker WebSocket without keeping a browser window open. The profile must already be signed in
+to the configured account mode; complete sign-in/CAPTCHA in the visible browser if prompted.
+Set `QUOTEX_BROWSER_SESSION=false` to opt out and use the fork's saved-session login instead.
 
 Notes:
 
-- Use `--account-type DEMO` first. Verify the whole path before switching to `REAL`.
-- The session expires. Re-run this command to refresh it.
-- Never share or commit the `ssid`, the Edge profile, or the Telegram session file.
+- Use `DEMO` first. Verify session extraction and broker API connectivity before any live account.
+- Per-broker browser defaults are controlled by `POCKETOPTION_SCRAPER_HEADLESS` and
+  `QUOTEX_SCRAPER_HEADLESS`; `--headed` / `--headless` override them for a manual run.
+- Quotex uses the persistent Playwright authorization flow and stable profile path
+  `data/quotex-playwright` by default. It may require a visible browser for sign-in/CAPTCHA.
+  Keep the browser profile private. `QUOTEX_SSID` and login credentials are only needed when
+  opting out with `QUOTEX_BROWSER_SESSION=false`.
+- Never share or commit `.env`, broker browser profiles, or the Telegram session file.
 
 ---
 
@@ -261,11 +295,41 @@ uv run uvicorn main:app --host 127.0.0.1 --port 9634
 ```
 
 Dashboard: `http://127.0.0.1:9634/ui/`
+Settings: `http://127.0.0.1:9634/ui/settings.html`
 Health: `http://127.0.0.1:9634/health`
 
-If `ssid` is missing or the broker rejects the connection, the app still starts in a degraded mode
-with trading disabled, and `/health` reports `broker_connected: false`. This is intentional: the app
-never blocks on interactive input, so a service manager restart cannot hang it.
+Both broker sessions initialize independently and concurrently. If one session is missing or its
+connection fails, the other broker remains available; `/health` reports whether either broker is
+connected. The app never blocks on interactive input, so a service manager restart cannot hang it.
+
+## Using both brokers
+
+1. Capture a session for each broker you intend to use, for example:
+
+   ```bash
+   python playwright_scraper.py --broker quotex --account-type DEMO --headed
+   python playwright_scraper.py --broker pocket_option --account-type DEMO --headed
+   ```
+
+   Complete any Cloudflare or other human verification in the visible browser. The dashboard never
+   captures, displays, or changes session credentials. After capture, the app can connect the saved
+   session for account reads without placing a trade.
+2. The Live desk shows separate Pocket Option and Quotex account balances, incoming signals,
+   open trades, and closed trades. Both broker workspaces refresh concurrently; neither is a
+   fallback for the other.
+3. On the Settings page, assign every Telegram channel to Pocket Option or Quotex. A channel's
+   configured broker takes precedence over broker metadata in its message. Webhook signals must
+   include explicit broker metadata; signals without a destination are rejected.
+
+Runtime signals, active and closed trades, and broker P/L events are stored in the SQLite database
+configured by `SIGNAL_BOT_STATE_PATH` (default: `signal_bot.sqlite3` if unset; the example
+environment file sets `data/signal_bot.sqlite3`). Closed-trade history is retained without a count
+limit. On restart, only trades with confirmed broker IDs resume monitoring; pending signals are
+marked interrupted, and ambiguous order placements are marked for review rather than replayed.
+Dashboard layout and theme choices are saved in the browser and do not include broker credentials.
+
+Connection status means the app has an authenticated broker connection; a saved session by itself
+is not proof that the broker accepted it. Account reads and connection checks do not submit orders.
 
 ---
 
@@ -597,14 +661,16 @@ the timeframe by default).
 | --- | --- | --- |
 | `GET` | `/` | Serves the dashboard. |
 | `GET` | `/ui/` | Static dashboard assets. |
+| `GET` | `/ui/settings.html` | Channel and risk configuration page. |
 | `GET` | `/health` | Broker connection, Telegram listener state, configured channels, `webhook_auth_configured`, and webhook counters. |
 | `POST` | `/trade_signal` | Signal webhook. Requires `x-webhook-secret` when configured. |
-| `GET` | `/account_details` | Balance, daily P/L, and lifespan P/L. |
-| `GET` | `/open_trades` | Currently open trades. |
-| `GET` | `/closed_trades` | Last 10 closed trades. |
-| `GET` | `/current_signals` | Signals currently held in memory. |
-| `GET` | `/get_risk_management` | Current risk configuration. |
-| `POST` | `/set_risk_management` | Updates risk configuration. Accepts zero values. |
+| `GET` | `/account_details?broker_id=...` | Broker-specific balance, daily P/L, and lifespan P/L. |
+| `GET` | `/open_trades?broker_id=...` | Open trades for the selected broker. |
+| `GET` | `/closed_trades?broker_id=...` | All retained closed trades for the selected broker; the dashboard displays newest first. |
+| `GET` | `/current_signals?broker_id=...` | Waiting signals for the selected broker. |
+| `GET` | `/get_risk_management` | Global settings, broker overrides, and effective risk profiles; `broker_id` selects the displayed profile. |
+| `POST` | `/set_risk_management` | Updates and persists global risk defaults. |
+| `PUT` | `/risk_management/brokers/{broker_id}` | Replaces sparse per-broker overrides; null or omitted values inherit global defaults. |
 | `GET` | `/get_channels` | Channel list as stored, the usable timezone offsets, and the listener's live state. |
 | `POST` | `/set_channels` | Replaces the channel list and reloads the listener. Validates the whole list first. |
 
@@ -641,15 +707,17 @@ Example health response:
 
 ## Testing ingestion
 
-With the app running:
+With the app running and the selected broker configured as a DEMO account:
 
 ```bash
-uv run python test.py
+uv run python test.py --broker quotex --direction CALL
 ```
-
-It prompts for an asset, direction, provider, port, and timezone, then posts a synthetic signal. It
-automatically sends `x-webhook-secret` when `WEBHOOK_SECRET` is set in `.env`. A `401` means the
-secret does not match the server value.
+Choose `pocket_option` or `quotex` for `--broker` and `CALL` or `PUT` for `--direction`.
+The script checks `/broker_status` and the broker's effective risk configuration, prints the
+configured martingale exposure, then requires you to type `PLACE DEMO TRADE` before posting.
+It automatically sends `x-webhook-secret` when `WEBHOOK_SECRET` is set in `.env`. The script
+refuses to send when the broker is not configured as DEMO. A `401` means the secret does not match
+the server value.
 
 Equivalently, from MacroDroid use the `test signal` widget.
 
@@ -671,7 +739,7 @@ The full path from a fresh checkout to a verified, running bot.
 
 - Python 3.13+ (`.python-version` pins `3.13`, `pyproject.toml` requires `>=3.13`)
 - [uv](https://docs.astral.sh/uv/) - recommended, so `uv.lock` gives an identical dependency set
-- Microsoft Edge - needed once, to capture the Pocket Option session
+- Microsoft Edge - used for browser-based capture/fallback for either broker
 - ngrok v3 with your authtoken, for the webhook tunnel
 - A Pocket Option account, plus an Android phone running MacroDroid unless you use the direct
   Telegram listener
@@ -695,18 +763,21 @@ cp .env.example .env        # Windows: Copy-Item .env.example .env
 ```
 
 At minimum set `WEBHOOK_SECRET` - generate one with
-`python -c "import secrets; print(secrets.token_urlsafe(32))"` - and leave `ssid` for the next step.
+`python -c "import secrets; print(secrets.token_urlsafe(32))"`. Configure each broker and channel
+destination separately in `.env` and the Settings page.
 [Configuration](#configuration) documents every key.
 
-### 3. Capture the Pocket Option session
+### 3. Capture a broker session
 
 ```bash
-uv run python playwright_scraper.py --account-type DEMO --timeout 120
+uv run python playwright_scraper.py --broker pocket_option --account-type DEMO --headed
+# or
+uv run python playwright_scraper.py --broker quotex --account-type DEMO --headless
 ```
 
-A headed Edge window opens. Log in manually, open the cabinet and leave the page open; the script
-writes `ssid`, `UID` and `ACCOUNT_TYPE` to `.env`. Start with `DEMO`. See
-[Capturing the Pocket Option session](#capturing-the-pocket-option-session) for details.
+The script prompts for any missing broker/account/email/password values, unless they are passed on
+the command line or already set in `.env`. It writes broker-prefixed session variables. Start with
+a demo account. See [Capturing broker sessions](#capturing-broker-sessions) for details.
 
 ### 4. Start the app
 
@@ -717,11 +788,12 @@ uv run uvicorn main:app --host 127.0.0.1 --port 9634
 Always start from the project root: `.env` and the `data/` paths are resolved relative to it.
 
 - Dashboard: `http://127.0.0.1:9634/ui/`
+- Settings: `http://127.0.0.1:9634/ui/settings.html`
 - Health: `http://127.0.0.1:9634/health`
 
-If `ssid` is missing or the broker rejects it, the app still starts with trading disabled and
-`/health` reports `broker_connected: false`. This is intentional, so a service manager restart
-cannot hang on input.
+The app initializes Pocket Option and Quotex independently. If one broker session is unavailable,
+the other can still connect and trade; `/health` reports `broker_connected: false` only when neither
+broker is connected.
 
 ### 5. Expose the webhook
 
@@ -736,12 +808,12 @@ Keep this URL stable across restarts, then point the MacroDroid `tunnel_url` var
 ### 6. Verify
 
 ```bash
-uv run python test.py                        # posts a synthetic signal
+uv run python test.py --broker quotex --direction CALL
 curl -s http://127.0.0.1:9634/health
 ```
 
-`webhook.last_result` should read `accepted`. A `401` means the secret does not match; a `503` means
-the broker is not connected.
+After confirming the DEMO-only prompt, `webhook.last_result` should read `accepted`. A `401` means
+the secret does not match; a `503` means the broker is not connected.
 
 ### Notes
 
@@ -763,10 +835,10 @@ the broker is not connected.
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | `401` from `/trade_signal` | Secret mismatch or missing header | Ensure both sides use the same value and the header is named `x-webhook-secret`. |
-| `503` from `/trade_signal` | Broker not connected | Check `/health` for `broker_connected`. Re-capture `ssid`. |
+| `503` from `/trade_signal` | Requested broker not connected | Check `/health` and reconnect that broker's session. |
 | `403` from `/trade_signal` | Daily loss breached `drawback_threshold` | Expected safety halt. Adjust the threshold deliberately if intended. |
 | Signals never arrive | Tunnel URL changed after restart | Use a tunnel with a stable URL; check `webhook.last_received_at`. |
-| `broker_connected: false` after restart | `ssid` expired | Re-run `playwright_scraper.py`. |
+| `broker_connected: false` after restart | A saved session is missing or expired | Run `playwright_scraper.py` for the affected broker and reconnect. |
 | Trades not placed but signals accepted | Signal arrived after its entry time | Signals are rejected as late. Check the timing and the timezone. |
 | Service will not start on Linux | Wrong path in the unit file | Confirm `WorkingDirectory` and `ExecStart` point at the actual venv. |
 | Service will not start on Windows | NSSM paths or permissions | Verify the venv path and check `logs\signalbot-error.log`. |

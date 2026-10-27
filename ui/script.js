@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Pocket Option Signal Bot — desk client
+   Signal Execution Desk — desk client
 
    Reads five endpoints and renders them as a ledger. The risk ladder mirrors
    the checks in main.py: a sequence has martingale_levels + 1 legs, per-leg
@@ -12,11 +12,33 @@
 
 const POLL_INTERVAL_MS = 5000;
 const THEME_KEY = "signal-desk-theme";
+const LAYOUT_KEY = "signal-desk-layout";
 const RETRY_HINT = "The desk retries every 5 seconds. If this keeps up, check the bot's log.";
 const MAX_LADDER_LEGS = 12;
 
-const NUMBER_FIELDS = ["initial_amount", "martingale_levels", "martingale_multiplier", "timeframe", "drawback_threshold"];
-const INTEGER_FIELDS = ["martingale_levels", "timeframe", "drawback_threshold"];
+const RISK_NUMBER_FIELDS = [
+	"initial_amount",
+	"martingale_levels",
+	"martingale_multiplier",
+	"timeframe",
+	"drawback_threshold",
+	"max_trade_amount",
+	"max_sequence_exposure",
+	"max_open_trades",
+	"max_open_trades_per_asset",
+	"max_open_trades_per_provider",
+	"stale_sequence_seconds",
+	"min_balance_reserve",
+];
+const INTEGER_FIELDS = [
+	"martingale_levels",
+	"timeframe",
+	"drawback_threshold",
+	"max_open_trades",
+	"max_open_trades_per_asset",
+	"max_open_trades_per_provider",
+	"stale_sequence_seconds",
+];
 
 const money = new Intl.NumberFormat("en-US", {
 	minimumFractionDigits: 2,
@@ -39,14 +61,20 @@ const els = {
 	ladder: document.getElementById("risk-ladder"),
 	limits: document.getElementById("risk-result"),
 	limitsState: document.getElementById("risk-limits-state"),
+	riskProfileMeta: document.getElementById("risk-profile-meta"),
 	status: document.getElementById("connection-state"),
 	statusLabel: document.getElementById("connection-state-label"),
 	statusTime: document.getElementById("last-updated"),
 	themeToggle: document.getElementById("theme-toggle"),
+	layoutChoice: document.getElementById("layout-choice"),
 	modal: document.getElementById("popup_bg"),
 	form: document.getElementById("risk-form-element"),
 	formError: document.getElementById("risk-form-error"),
+	riskProfile: document.getElementById("risk-profile-input"),
+	riskProfileHint: document.getElementById("risk-profile-hint"),
+	riskGlobalTimezone: document.getElementById("risk-global-timezone-field"),
 	openForm: document.getElementById("set-risk-button"),
+	openBrokerRiskForm: document.getElementById("set-broker-risk-button"),
 	cancelForm: document.getElementById("cancel-risk-button"),
 	channels: document.getElementById("channels-result"),
 	channelNote: document.getElementById("channels-problems"),
@@ -56,11 +84,17 @@ const els = {
 	channelFormError: document.getElementById("channel-form-error"),
 	channelHeading: document.getElementById("channel-form-heading"),
 	channelTimezone: document.getElementById("channel-timezone-input"),
+	channelBroker: document.getElementById("channel-broker-input"),
 	deleteChannel: document.getElementById("delete-channel-button"),
 	cancelChannel: document.getElementById("cancel-channel-button"),
+	brokers: document.getElementById("broker-workspaces"),
+	brokerNotice: document.getElementById("broker-notice"),
+	accountMeta: document.getElementById("account-meta"),
 };
 
 const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+const BROKER_NAMES = { pocket_option: "Pocket Option", quotex: "Quotex" };
+const BROKER_IDS = ["pocket_option", "quotex"];
 
 /* --- Small helpers ------------------------------------------------------ */
 
@@ -78,6 +112,11 @@ function cell(value) {
 function displayValue(value) {
 	if (value === undefined || value === null || value === "") return "—";
 	return String(value);
+}
+
+function setTextContent(element, value) {
+	const text = String(value);
+	if (element.textContent !== text) element.textContent = text;
 }
 
 function isNumber(value) {
@@ -107,21 +146,71 @@ function errorState(headline) {
 	return `<div class="error"><p>${headline}</p><p>${RETRY_HINT}</p></div>`;
 }
 
+function renderMarkup(container, markup, key) {
+	if (container.dataset.renderKey === key) return;
+	container.innerHTML = markup;
+	container.dataset.renderKey = key;
+}
+
+function renderRows(container, tableClass, headings, rows) {
+	let table = container.querySelector(":scope > table");
+	if (!table || !table.classList.contains(tableClass)) {
+		container.innerHTML = `<table class="${tableClass}"><thead><tr>${headings}</tr></thead><tbody></tbody></table>`;
+		container.dataset.renderKey = `table:${tableClass}`;
+		table = container.querySelector(":scope > table");
+	}
+
+	const body = table.tBodies[0];
+	const existing = new Map(
+		Array.from(body.querySelectorAll(":scope > tr[data-row-key]"))
+			.map((row) => [row.dataset.rowKey, row])
+	);
+	let cursor = body.firstElementChild;
+	for (const item of rows) {
+		let row = existing.get(item.key);
+		if (row) existing.delete(item.key);
+		if (!row) {
+			const template = document.createElement("template");
+			template.innerHTML = `<tr>${item.html}</tr>`;
+			row = template.content.firstElementChild;
+			row.dataset.rowKey = item.key;
+			row.dataset.rendered = item.html;
+		} else if (row.dataset.rendered !== item.html) {
+			row.innerHTML = item.html;
+			row.dataset.rendered = item.html;
+		}
+		if (row !== cursor) body.insertBefore(row, cursor);
+		cursor = row.nextElementSibling;
+	}
+	for (const row of existing.values()) row.remove();
+	while (cursor) {
+		const next = cursor.nextElementSibling;
+		cursor.remove();
+		cursor = next;
+	}
+	delete container.dataset.renderKey;
+	container.dataset.view = `table:${tableClass}`;
+}
+
 /*
  * A failed read keeps the last known table on screen, dimmed and labelled,
  * so open positions stay readable while the desk retries.
  */
 function renderFailure(container, headline) {
-	const table = container.querySelector("table");
-	container.innerHTML = table ? `${errorState(headline)}${table.outerHTML}` : errorState(headline);
-	if (table) {
-		container.dataset.stale = "true";
+	let error = container.querySelector(":scope > .error");
+	if (!error) {
+		const template = document.createElement("template");
+		template.innerHTML = errorState(escapeHtml(headline));
+		error = template.content.firstElementChild;
+		container.prepend(error);
 	} else {
-		delete container.dataset.stale;
+		error.querySelector("p").textContent = headline;
 	}
+	container.dataset.stale = "true";
 }
 
 function clearFailure(container) {
+	container.querySelector(":scope > .error")?.remove();
 	delete container.dataset.stale;
 }
 
@@ -169,48 +258,170 @@ function formatTimestamp(value) {
 
 /* --- Readers ------------------------------------------------------------ */
 
-async function updateBalance() {
+let brokerStatuses = [];
+let brokerStructureKey = "";
+
+function brokerName(brokerId) { return BROKER_NAMES[brokerId] || String(brokerId || "Broker"); }
+
+function brokerQuery(path, brokerId) {
+	return `${path}?broker_id=${encodeURIComponent(brokerId)}`;
+}
+
+function brokerPanel(brokerId) {
+	return document.querySelector(`[data-broker-panel="${brokerId}"]`);
+}
+
+function renderBrokers() {
+	if (!brokerStatuses.length || !els.brokers) {
+		renderFailure(els.brokers, "Broker configuration could not be read.");
+		return;
+	}
+
+	const structureKey = JSON.stringify(brokerStatuses.map(({ id, name, account_type, configured }) => ({
+		id, name, account_type, configured,
+	})));
+	if (structureKey !== brokerStructureKey) {
+		els.brokers.innerHTML = brokerStatuses.map((broker) => {
+		const state = broker.connected ? "connected" : broker.configured ? "disconnected" : "missing";
+		const stateLabel = broker.connected ? "Connected" : broker.configured ? "Session saved · not connected" : "Session needed";
+		const captureCommand = `python playwright_scraper.py --broker ${broker.id} --account-type ${broker.account_type} --headed`;
+		const sessionHelp = broker.configured ? "" : `
+			<div class="broker-card__session">
+				<span>Capture a session in a visible browser and complete verification there.</span>
+				<code>${escapeHtml(captureCommand)}</code>
+			</div>`;
+		const connectLabel = broker.connected ? "Refresh connection" : "Connect";
+		const connectDisabled = broker.configured ? "" : " disabled";
+		return `
+			<article class="broker-workspace" data-broker-panel="${escapeHtml(broker.id)}">
+				<div class="broker-card__head">
+					<div>
+						<h2 class="broker-card__name">${escapeHtml(broker.name)}</h2>
+						<p class="broker-card__account">${escapeHtml(broker.account_type)} account</p>
+					</div>
+					<span class="broker-card__state" data-state="${state}">${stateLabel}</span>
+				</div>
+				<div class="broker-card__actions">
+					<button class="button" type="button" data-broker-action="connect" data-broker-id="${escapeHtml(broker.id)}"${connectDisabled}>${connectLabel}</button>
+				</div>
+				${sessionHelp}
+				<section class="broker-account" aria-label="${escapeHtml(broker.name)} account details">
+					<p class="region__meta">${escapeHtml(broker.account_type)} · ${escapeHtml(broker.name)} account</p>
+					<dl class="readings">
+						<div class="reading reading--primary" data-flash><dt class="reading__label">Balance</dt><dd class="reading__value" data-account="balance">&mdash;</dd></div>
+						<div class="reading" data-flash><dt class="reading__label">Bot P/L today</dt><dd class="reading__value" data-account="pnl">&mdash;</dd></div>
+						<div class="reading" data-flash><dt class="reading__label">Lifespan</dt><dd class="reading__value" data-account="lifespan">&mdash;</dd></div>
+					</dl>
+				</section>
+				<div class="broker-activity">
+					<section class="region"><h3 class="region__heading">Incoming signals</h3><div class="data" data-activity="signals">Loading&hellip;</div></section>
+					<section class="region"><h3 class="region__heading">Open trades</h3><div class="data" data-activity="open">Loading&hellip;</div></section>
+					<section class="region"><h3 class="region__heading">Closed trades</h3><p class="region__note">Newest settlement first.</p><div class="data" data-activity="closed">Loading&hellip;</div></section>
+				</div>
+			</article>`;
+		}).join("");
+		brokerStructureKey = structureKey;
+	}
+
+	clearFailure(els.brokers);
+	for (const broker of brokerStatuses) {
+		const panel = brokerPanel(broker.id);
+		if (!panel) continue;
+		const state = broker.connected ? "connected" : broker.configured ? "disconnected" : "missing";
+		const stateLabel = broker.connected
+			? "Connected"
+			: broker.configured
+				? "Session saved · not connected"
+				: "Session needed";
+		const stateElement = panel.querySelector(".broker-card__state");
+		const button = panel.querySelector('[data-broker-action="connect"]');
+		stateElement.textContent = stateLabel;
+		stateElement.dataset.state = state;
+		button.textContent = broker.connected ? "Refresh connection" : "Connect";
+		button.disabled = !broker.configured || button.getAttribute("aria-busy") === "true";
+	}
+}
+
+async function updateBrokerStatus() {
+	const response = await fetch("/broker_status");
+	if (!response.ok) throw new Error(`HTTP ${response.status}`);
+	const data = await response.json();
+	brokerStatuses = Array.isArray(data.brokers) ? data.brokers : [];
+	renderBrokers();
+}
+
+async function connectBroker(brokerId, button) {
+	button.disabled = true;
+	button.setAttribute("aria-busy", "true");
+	button.textContent = "Connecting…";
 	try {
-		const response = await fetch("/account_details");
+		const response = await fetch(`/brokers/${encodeURIComponent(brokerId)}/connect`, { method: "POST" });
+		const body = await response.json();
+		if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : `HTTP ${response.status}`);
+		await updateBrokerStatus();
+		await updateBrokerData(brokerId);
+	} catch (error) {
+		console.error(`Error connecting ${brokerId}:`, error);
+		try {
+			await updateBrokerStatus();
+		} catch (statusError) {
+			console.error("Error refreshing broker status:", statusError);
+		}
+		const panel = brokerPanel(brokerId);
+		const status = panel && panel.querySelector(".broker-card__state");
+		if (status) {
+			status.textContent = error.message || `Could not connect to ${brokerName(brokerId)}.`;
+			status.dataset.state = "missing";
+		}
+	} finally {
+		button.disabled = !brokerStatuses.find((broker) => broker.id === brokerId)?.configured;
+		button.removeAttribute("aria-busy");
+	}
+}
+
+async function updateBalance(brokerId) {
+	const panel = brokerPanel(brokerId);
+	try {
+		const response = await fetch(brokerQuery("/account_details", brokerId));
 		if (!response.ok) throw new Error(`HTTP ${response.status}`);
 		const data = await response.json();
-
-		els.balance.textContent = isNumber(data.balance) ? money.format(data.balance) : displayValue(data.balance);
-		els.pnl.textContent = isNumber(data.P_n_L_day) ? signedMoney.format(data.P_n_L_day) : displayValue(data.P_n_L_day);
-		els.lifespan.textContent = displayValue(data.lifespan);
-
+		const balance = panel.querySelector('[data-account="balance"]');
+		const pnl = panel.querySelector('[data-account="pnl"]');
+		const lifespan = panel.querySelector('[data-account="lifespan"]');
+		setTextContent(balance, isNumber(data.balance) ? money.format(data.balance) : displayValue(data.balance));
+		setTextContent(pnl, isNumber(data.P_n_L_day) ? signedMoney.format(data.P_n_L_day) : displayValue(data.P_n_L_day));
+		setTextContent(lifespan, displayValue(data.lifespan));
 		if (isNumber(data.P_n_L_day) && data.P_n_L_day !== 0) {
-			els.pnl.dataset.sign = data.P_n_L_day > 0 ? "pos" : "neg";
+			pnl.dataset.sign = data.P_n_L_day > 0 ? "pos" : "neg";
 		} else {
-			delete els.pnl.dataset.sign;
+			delete pnl.dataset.sign;
 		}
-
-		clearFailure(els.readings);
+		clearFailure(panel.querySelector(".readings"));
 	} catch (error) {
-		els.readings.dataset.stale = "true";
-		console.error("Error fetching balance data:", error);
+		panel.querySelector(".readings").dataset.stale = "true";
+		console.error(`Error fetching ${brokerId} account data:`, error);
 		throw error;
 	}
 }
 
-async function updateOpenTrades() {
+async function updateOpenTrades(brokerId) {
+	const container = brokerPanel(brokerId).querySelector('[data-activity="open"]');
 	try {
-		const response = await fetch("/open_trades");
+		const response = await fetch(brokerQuery("/open_trades", brokerId));
 		if (!response.ok) throw new Error(`HTTP ${response.status}`);
 		const data = await response.json();
 		const trades = asArray(data.open_trades);
-
-		clearFailure(els.openTrades);
+		clearFailure(container);
 
 		if (!trades.length) {
-			els.openTrades.innerHTML = emptyState(
+			renderMarkup(container, emptyState(
 				"No trades are open.",
 				"The bot places each signal at its entry time."
-			);
+			), "empty:open");
 			return;
 		}
 
-		const rows = trades.map((trade) => {
+		const rows = trades.map((trade, index) => {
 			const openPrice = toNumber(trade.openPrice ?? trade.open_price);
 			const lastClose = toNumber(trade.current_price ?? trade.currentPrice);
 			const points = formatPoints(trade.direction, openPrice, lastClose);
@@ -218,8 +429,9 @@ async function updateOpenTrades() {
 				? money.format(trade.amount + trade.profit)
 				: "—";
 
-			return `
-				<tr>
+			return {
+				key: String(trade.trade_id ?? `${trade.asset ?? "trade"}:${trade.openedTime ?? index}`),
+				html: `
 					<td>${formatDirection(trade.direction)}</td>
 					<td>${cell(trade.asset)}</td>
 					<td class="num">${moneyOr(trade.amount)}</td>
@@ -228,103 +440,99 @@ async function updateOpenTrades() {
 					<td class="num">${moneyOr(trade.profit)}</td>
 					<td class="num">${totalReturns}</td>
 					<td class="mono">${formatTimestamp(trade.openedTime)}</td>
-				</tr>`;
-		}).join("");
+				`,
+			};
+		});
 
-		els.openTrades.innerHTML = `
-			<table class="trades-table">
-				<thead>
-					<tr>
-						<th>Direction</th>
-						<th>Asset</th>
-						<th class="num">Amount</th>
-						<th class="num">Open price</th>
-						<th class="num">Points</th>
-						<th class="num">Profit</th>
-						<th class="num">Total returns</th>
-						<th>Opened</th>
-					</tr>
-				</thead>
-				<tbody>${rows}</tbody>
-			</table>`;
+		renderRows(container, "trades-table", `
+			<th>Direction</th>
+			<th>Asset</th>
+			<th class="num">Amount</th>
+			<th class="num">Open price</th>
+			<th class="num">Points</th>
+			<th class="num">Profit</th>
+			<th class="num">Total returns</th>
+			<th>Opened</th>`, rows);
 	} catch (error) {
-		renderFailure(els.openTrades, "Couldn't read the open trades.");
-		console.error("Error fetching open trades:", error);
+		renderFailure(container, "Couldn't read the open trades.");
+		console.error(`Error fetching ${brokerId} open trades:`, error);
 		throw error;
 	}
 }
 
-async function updateCurrentSignals() {
+async function updateCurrentSignals(brokerId) {
+	const container = brokerPanel(brokerId).querySelector('[data-activity="signals"]');
 	try {
-		const response = await fetch("/current_signals");
+		const response = await fetch(brokerQuery("/current_signals", brokerId));
 		if (!response.ok) throw new Error(`HTTP ${response.status}`);
 		const data = await response.json();
 		const signals = asArray(data.signals);
 
-		clearFailure(els.signals);
+		clearFailure(container);
 
 		if (!signals.length) {
-			els.signals.innerHTML = emptyState(
+			renderMarkup(container, emptyState(
 				"No signals are waiting.",
 				"Nothing to place until the next alert arrives."
-			);
+			), "empty:signals");
 			return;
 		}
 
-		const rows = signals.map((signal) => `
-			<tr>
+		const rows = signals.map((signal, index) => ({
+			key: String(signal.signal_id ?? `${signal.signal_provider ?? "signal"}:${signal.asset ?? ""}:${signal.entry_time ?? index}`),
+			html: `
 				<td>${cell(signal.signal_provider)}</td>
 				<td>${cell(signal.asset)}</td>
 				<td>${formatDirection(signal.direction)}</td>
 				<td class="mono">${cell(signal.entry_time)}</td>
-			</tr>`).join("");
+				<td>${cell(signal.status || "pending")}</td>`,
+		}));
 
-		els.signals.innerHTML = `
-			<table class="signals-table">
-				<thead>
-					<tr>
-						<th>Signal provider</th>
-						<th>Asset</th>
-						<th>Direction</th>
-						<th>Entry time</th>
-					</tr>
-				</thead>
-				<tbody>${rows}</tbody>
-			</table>`;
+		renderRows(container, "signals-table", `
+			<th>Signal provider</th>
+			<th>Asset</th>
+			<th>Direction</th>
+			<th>Entry time</th>
+			<th>Status</th>`, rows);
 	} catch (error) {
-		renderFailure(els.signals, "Couldn't read the incoming signals.");
-		console.error("Error fetching current signals:", error);
+		renderFailure(container, "Couldn't read the incoming signals.");
+		console.error(`Error fetching ${brokerId} signals:`, error);
 		throw error;
 	}
 }
 
-async function updateClosedTrades() {
+async function updateClosedTrades(brokerId) {
+	const container = brokerPanel(brokerId).querySelector('[data-activity="closed"]');
 	try {
-		const response = await fetch("/closed_trades");
+		const response = await fetch(brokerQuery("/closed_trades", brokerId));
 		if (response.status === 404) {
-			clearFailure(els.closedTrades);
-			els.closedTrades.innerHTML = `<div class="info"><p>This bot build doesn't publish closed trades.</p><p>Every other reading on the desk is live.</p></div>`;
+			clearFailure(container);
+			renderMarkup(container, `<div class="info"><p>This bot build doesn't publish closed trades.</p><p>Every other reading on the desk is live.</p></div>`, "info:closed-unavailable");
 			return;
 		}
 		if (!response.ok) throw new Error(`HTTP ${response.status}`);
 		const data = await response.json();
-		/* Newest settlement first: the endpoint keeps the last ten in order. */
-		const trades = asArray(data.closed_trades).slice().reverse();
+		/* Newest settlement first; the endpoint returns the full retained history. */
+		const tradeEntries = Array.isArray(data.closed_trades)
+			? data.closed_trades.map((trade, index) => [String(trade.trade_id ?? index), trade])
+			: Object.entries(data.closed_trades || {});
+		const trades = tradeEntries.slice().reverse();
 
-		clearFailure(els.closedTrades);
+		clearFailure(container);
 
 		if (!trades.length) {
-			els.closedTrades.innerHTML = emptyState(
+			renderMarkup(container, emptyState(
 				"No trades have settled yet.",
 				"Each trade appears here the moment its result comes back."
-			);
+			), "empty:closed");
 			return;
 		}
 
-		const rows = trades.map((trade) => {
+		const rows = trades.map(([tradeId, trade]) => {
 			const details = trade.trade_details || {};
-			return `
-				<tr>
+			return {
+				key: String(tradeId),
+				html: `
 					<td>${cell(details.signal_provider)}</td>
 					<td>${formatOutcome(details.result)}</td>
 					<td>${cell(details.asset)}</td>
@@ -332,27 +540,21 @@ async function updateClosedTrades() {
 					<td class="mono">${cell(details.entry_time)}</td>
 					<td class="num">${moneyOr(details.amount)}</td>
 					<td class="num">${cell(details.level)}</td>
-				</tr>`;
-		}).join("");
+				`,
+			};
+		});
 
-		els.closedTrades.innerHTML = `
-			<table class="closed-trade-table">
-				<thead>
-					<tr>
-						<th>Signal provider</th>
-						<th>Outcome</th>
-						<th>Asset</th>
-						<th>Direction</th>
-						<th>Entry time</th>
-						<th class="num">Amount</th>
-						<th class="num">Level</th>
-					</tr>
-				</thead>
-				<tbody>${rows}</tbody>
-			</table>`;
+		renderRows(container, "closed-trade-table", `
+			<th>Signal provider</th>
+			<th>Outcome</th>
+			<th>Asset</th>
+			<th>Direction</th>
+			<th>Entry time</th>
+			<th class="num">Amount</th>
+			<th class="num">Level</th>`, rows);
 	} catch (error) {
-		renderFailure(els.closedTrades, "Couldn't read the closed trades.");
-		console.error("Error fetching closed trades:", error);
+		renderFailure(container, "Couldn't read the closed trades.");
+		console.error(`Error fetching ${brokerId} closed trades:`, error);
 		throw error;
 	}
 }
@@ -365,6 +567,14 @@ async function updateRiskData() {
 		const values = payload.risk_values || {};
 
 		lastRiskValues = values;
+		lastRiskSettings = {
+			global: payload.global_risk_values || values,
+			overrides: payload.broker_overrides || {},
+			effective: payload.effective_risk_by_broker || {},
+		};
+		if (els.riskProfileMeta) {
+			els.riskProfileMeta.textContent = "Global defaults apply to each broker unless overridden.";
+		}
 		els.limitsState.innerHTML = "";
 		clearFailure(els.limits);
 
@@ -470,6 +680,8 @@ function renderLadder(values) {
 /* --- The risk sheet ----------------------------------------------------- */
 
 let lastRiskValues = {};
+let lastRiskSettings = { global: {}, overrides: {}, effective: {} };
+let riskEditorProfile = "global";
 
 function showFormError(message) {
 	els.formError.textContent = message;
@@ -483,8 +695,8 @@ function clearFormError() {
 
 function setFieldValue(name, value) {
 	const field = els.form.elements.namedItem(name);
-	if (field && value !== undefined && value !== null && value !== "") {
-		field.value = String(value);
+	if (field) {
+		field.value = value === undefined || value === null ? "" : String(value);
 	}
 }
 
@@ -503,17 +715,38 @@ function toEtcTimezone(value) {
 
 function prefillRiskForm() {
 	clearFormError();
-	const values = lastRiskValues || {};
-	setFieldValue("initial_amount", values.initial_amount);
-	setFieldValue("martingale_levels", values.martingale_levels);
-	setFieldValue("martingale_multiplier", values.martingale_multiplier);
-	setFieldValue("timeframe", values.timeframe);
-	setFieldValue("local_timezone", toOffsetInput(values.local_timezone));
-	const drawback = toNumber(values.drawback_threshold);
-	setFieldValue("drawback_threshold", isNumber(drawback) ? Math.abs(drawback) : "");
+	const globalProfile = riskEditorProfile === "global";
+	const values = globalProfile
+		? lastRiskSettings.global
+		: lastRiskSettings.overrides[riskEditorProfile] || {};
+	for (const field of RISK_NUMBER_FIELDS) {
+		const value = field === "drawback_threshold" && values[field] !== undefined
+			? Math.abs(toNumber(values[field]))
+			: values[field];
+		setFieldValue(field, value);
+	}
+	setFieldValue("local_timezone", toOffsetInput(lastRiskSettings.global.local_timezone));
+	const martingale = els.form.elements.namedItem("martingale_enabled");
+	martingale.value = values.martingale_enabled === undefined
+		? globalProfile ? String(lastRiskSettings.global.martingale_enabled) : ""
+		: String(values.martingale_enabled);
+	els.riskGlobalTimezone.hidden = !globalProfile;
+	els.form.elements.namedItem("local_timezone").required = globalProfile;
+	for (const field of RISK_NUMBER_FIELDS) {
+		els.form.elements.namedItem(field).required = globalProfile;
+	}
+	els.riskProfileHint.textContent = globalProfile
+		? "Global defaults apply to both brokers unless a broker overrides a field."
+		: "Leave a field blank to inherit its global value. Clear every field to remove this broker's overrides.";
 }
 
 let lastFocused = null;
+
+function openRiskEditor(profile) {
+	riskEditorProfile = profile;
+	els.riskProfile.value = profile;
+	showriskform();
+}
 
 function showriskform() {
 	const opening = els.modal.classList.contains("hidden");
@@ -535,66 +768,68 @@ function showriskform() {
 }
 
 /*
- * Only the six fields on the sheet are edited here; everything else the bot
- * holds (concurrency caps, balance reserve, recovery on/off) is sent back
- * unchanged. POSTing a partial body would let Pydantic fill those with
- * defaults and silently widen the limits.
+ * Global saves send every editable risk field because the endpoint validates
+ * a complete profile. Broker saves omit blank fields so they inherit global
+ * values; the API validates and persists that sparse override.
  */
 async function setRiskData(form) {
 	const raw = Object.fromEntries(new FormData(form).entries());
-
-	const timezone = toEtcTimezone(raw.local_timezone);
-	if (!timezone) {
-		showFormError("Write the timezone as +2 or -3, in whole hours from 0 to 14.");
-		return false;
-	}
-
-	const numbers = {};
-	for (const field of NUMBER_FIELDS) {
+	const globalProfile = riskEditorProfile === "global";
+	const payload = {};
+	for (const field of RISK_NUMBER_FIELDS) {
+		if (raw[field] === "") {
+			if (globalProfile) {
+				showFormError("Every global risk value needs a number.");
+				return false;
+			}
+			continue;
+		}
 		const value = toNumber(raw[field]);
 		if (!isNumber(value)) {
-			showFormError("Every field on this sheet needs a number.");
+			showFormError("Risk values must be valid numbers.");
 			return false;
 		}
 		if (INTEGER_FIELDS.includes(field) && !Number.isInteger(value)) {
-			showFormError("Levels, trade duration and the threshold must be whole numbers.");
+			showFormError("Trade duration, counts, levels, timeouts and the threshold must be whole numbers.");
 			return false;
 		}
-		numbers[field] = value;
+		if (field === "drawback_threshold") {
+			payload[field] = -Math.abs(value);
+		} else {
+			payload[field] = value;
+		}
 	}
 
-	if (numbers.initial_amount <= 0 || numbers.timeframe <= 0 || numbers.drawback_threshold <= 0) {
-		showFormError("Amounts and duration must be greater than zero.");
-		return false;
-	}
-	if (numbers.martingale_levels < 0) {
-		showFormError("Martingale levels cannot be negative.");
-		return false;
-	}
-	if (numbers.martingale_multiplier < 1) {
-		showFormError("The multiplier has to be 1 or more, or a recovery leg would be smaller than the loss it covers.");
+	const martingale = raw.martingale_enabled;
+	if (martingale !== "") {
+		payload.martingale_enabled = martingale === "true";
+	} else if (globalProfile) {
+		showFormError("Choose whether recovery trades are enabled.");
 		return false;
 	}
 
-	const payload = {
-		...lastRiskValues,
-		initial_amount: numbers.initial_amount,
-		martingale_levels: numbers.martingale_levels,
-		martingale_multiplier: numbers.martingale_multiplier,
-		timeframe: numbers.timeframe,
-		local_timezone: timezone,
-		drawback_threshold: -Math.abs(numbers.drawback_threshold),
-	};
+	if (globalProfile) {
+		const timezone = toEtcTimezone(raw.local_timezone);
+		if (!timezone) {
+			showFormError("Write the bot timezone as +2 or -3, in whole hours from 0 to 14.");
+			return false;
+		}
+		payload.local_timezone = timezone;
+	}
+
+	const endpoint = globalProfile
+		? "/set_risk_management"
+		: `/risk_management/brokers/${encodeURIComponent(riskEditorProfile)}`;
 
 	try {
-		const response = await fetch("/set_risk_management", {
-			method: "POST",
+		const response = await fetch(endpoint, {
+			method: globalProfile ? "POST" : "PUT",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(payload),
 		});
 
 		if (!response.ok) {
-			let detail = `The bot rejected these limits (HTTP ${response.status}).`;
+			let detail = `The bot rejected these risk settings (HTTP ${response.status}).`;
 			try {
 				const body = await response.json();
 				if (typeof body.detail === "string") detail = body.detail;
@@ -616,8 +851,8 @@ async function setRiskData(form) {
 		}
 		return true;
 	} catch (error) {
-		showFormError("Couldn't reach the bot, so nothing was saved.");
-		console.error("Error setting risk data:", error);
+		showFormError("Couldn't reach the bot, so these risk settings were not saved.");
+		console.error("Error setting risk settings:", error);
 		return false;
 	}
 }
@@ -627,11 +862,20 @@ async function handleRiskSubmit(event) {
 	if (!els.form.reportValidity()) return;
 
 	const submit = els.form.querySelector('button[type="submit"]');
-	if (submit) submit.disabled = true;
+	const originalLabel = submit?.textContent;
+	if (submit) {
+		submit.disabled = true;
+		submit.setAttribute("aria-busy", "true");
+		submit.textContent = "Saving…";
+	}
 	try {
 		await setRiskData(els.form);
 	} finally {
-		if (submit) submit.disabled = false;
+		if (submit) {
+			submit.disabled = false;
+			submit.removeAttribute("aria-busy");
+			submit.textContent = originalLabel;
+		}
 	}
 }
 
@@ -650,7 +894,7 @@ let editingIndex = null;
 
 /* "Etc/GMT-2" is stored but "GMT+2" is what the channel actually printed. */
 function timezoneLabel(value) {
-	if (!value) return "default";
+	if (!value) return "not configured";
 	const offset = toOffsetInput(value);
 	return offset ? `GMT${offset}` : String(value);
 }
@@ -661,6 +905,7 @@ function channelPayload(entry) {
 		channel: entry.channel,
 		timezone: entry.timezone || null,
 		provider: entry.provider || null,
+		broker: entry.broker || null,
 		enabled: entry.enabled !== false,
 	};
 }
@@ -697,6 +942,7 @@ function renderChannels() {
 		const problem = entry.problem
 			? `<span class="channel-problem">${escapeHtml(entry.problem)}</span>`
 			: "";
+		const route = entry.broker ? brokerName(entry.broker) : "not configured";
 
 		return `
 			<tr>
@@ -705,6 +951,7 @@ function renderChannels() {
 				<td class="mono channel-cell">${cell(entry.channel)}${problem}</td>
 				<td class="mono">${escapeHtml(timezoneLabel(entry.timezone))}</td>
 				<td>${cell(entry.provider)}</td>
+				<td>${escapeHtml(route)}</td>
 				<td class="num">${live && live.last_message_id != null ? escapeHtml(String(live.last_message_id)) : "—"}</td>
 				<td class="channel-actions">
 					<button class="button button--quiet" type="button" data-action="edit" data-index="${index}">Edit</button>
@@ -722,6 +969,7 @@ function renderChannels() {
 					<th>Channel</th>
 					<th>Timezone</th>
 					<th>Provider</th>
+					<th>Trade destination</th>
 					<th class="num">Last id</th>
 					<th></th>
 				</tr>
@@ -850,6 +1098,7 @@ function openChannelForm(index) {
 	setChannelField("channel", entry ? entry.channel : "");
 	setChannelField("name", entry ? entry.name : "");
 	setChannelField("provider", entry ? entry.provider : "");
+	setChannelField("broker", entry ? entry.broker : "");
 	setChannelField("timezone", entry && entry.timezone ? entry.timezone : "");
 	els.channelForm.elements.namedItem("enabled").checked = entry ? isEnabled(entry) : true;
 
@@ -866,6 +1115,7 @@ function readChannelForm() {
 		channel: String(raw.channel || "").trim(),
 		timezone: String(raw.timezone || "").trim() || null,
 		provider: String(raw.provider || "").trim() || null,
+		broker: String(raw.broker || "").trim() || null,
 		enabled: els.channelForm.elements.namedItem("enabled").checked,
 	};
 }
@@ -887,9 +1137,22 @@ async function handleChannelSubmit(event) {
 	}
 
 	const submit = els.channelForm.querySelector('button[type="submit"]');
-	if (submit) submit.disabled = true;
-	const result = await saveChannels(next);
-	if (submit) submit.disabled = false;
+	const originalLabel = submit?.textContent;
+	if (submit) {
+		submit.disabled = true;
+		submit.setAttribute("aria-busy", "true");
+		submit.textContent = "Saving…";
+	}
+	let result;
+	try {
+		result = await saveChannels(next);
+	} finally {
+		if (submit) {
+			submit.disabled = false;
+			submit.removeAttribute("aria-busy");
+			submit.textContent = originalLabel;
+		}
+	}
 
 	if (!result.ok) {
 		showChannelError(result.detail);
@@ -986,26 +1249,30 @@ function renderTimestamp() {
 	els.statusTime.textContent = els.status.dataset.state === "stalled" ? `last reading ${phrase}` : `updated ${phrase}`;
 }
 
-/*
- * Sequential by design: the broker reads can outlast the poll interval, and
- * the app queues requests, so a second kick-off would only pile them up.
- */
 async function refreshAll() {
 	if (refreshing || document.hidden) return;
 	refreshing = true;
 
-	const results = await Promise.allSettled([
-		updateBalance(),
-		updateOpenTrades(),
-		updateCurrentSignals(),
-		updateClosedTrades(),
-		updateRiskData(),
-		updateChannels(),
-	]);
+	let brokerStatusFailed = false;
+	let results;
+	if (document.body.dataset.page === "settings") {
+		results = await Promise.allSettled([updateRiskData(), updateChannels()]);
+	} else {
+		try {
+			await updateBrokerStatus();
+		} catch (error) {
+			brokerStatusFailed = true;
+			renderFailure(els.brokers, "Couldn't read broker connection status.");
+			console.error("Error fetching broker status:", error);
+		}
+		results = brokerStatusFailed
+			? []
+			: await Promise.allSettled(BROKER_IDS.map(updateBrokerData));
+	}
 
 	refreshing = false;
 
-	if (results.every((result) => result.status === "fulfilled")) {
+	if (!brokerStatusFailed && results.every((result) => result.status === "fulfilled")) {
 		lastSuccessAt = Date.now();
 		setStatus("live");
 		if (!flashReady) {
@@ -1017,6 +1284,33 @@ async function refreshAll() {
 	}
 
 	renderTimestamp();
+}
+
+function updateBrokerData(brokerId) {
+	const status = brokerStatuses.find((broker) => broker.id === brokerId);
+	const panel = brokerPanel(brokerId);
+	if (!status?.connected) {
+		const state = status?.configured
+			? "Connect this broker to read its account and activity."
+			: "A broker session is required. Follow the capture command above, then connect.";
+		for (const key of ["signals", "open", "closed"]) {
+			const container = panel.querySelector(`[data-activity="${key}"]`);
+			renderMarkup(container, emptyState(
+				"Broker is not connected.",
+				state
+			), `disconnected:${state}`);
+		}
+		for (const key of ["balance", "pnl", "lifespan"]) {
+			setTextContent(panel.querySelector(`[data-account="${key}"]`), "—");
+		}
+		return Promise.resolve();
+	}
+	return Promise.all([
+		updateBalance(brokerId),
+		updateCurrentSignals(brokerId),
+		updateOpenTrades(brokerId),
+		updateClosedTrades(brokerId),
+	]);
 }
 
 /* Values that moved between polls say so, then settle. */
@@ -1046,8 +1340,10 @@ function observeValueChanges() {
 function applyTheme(theme, persist) {
 	const light = theme === "light";
 	document.documentElement.dataset.theme = light ? "light" : "dark";
-	els.themeToggle.setAttribute("aria-pressed", String(light));
-	els.themeToggle.setAttribute("aria-label", light ? "Switch to the dark theme" : "Switch to the light theme");
+	if (els.themeToggle) {
+		els.themeToggle.setAttribute("aria-pressed", String(light));
+		els.themeToggle.setAttribute("aria-label", light ? "Switch to the dark theme" : "Switch to the light theme");
+	}
 
 	const themeColor = document.querySelector('meta[name="theme-color"]');
 	if (themeColor) themeColor.setAttribute("content", light ? "#EFF1F2" : "#0E1418");
@@ -1061,45 +1357,111 @@ function applyTheme(theme, persist) {
 	}
 }
 
+function applyLayout(layout, persist = true) {
+	const selectedLayout = layout === "stacked" ? "stacked" : "adaptive";
+	document.documentElement.dataset.layout = selectedLayout;
+	document.body.dataset.layout = selectedLayout;
+	if (els.layoutChoice) els.layoutChoice.value = selectedLayout;
+	if (persist) {
+		try {
+			localStorage.setItem(LAYOUT_KEY, selectedLayout);
+		} catch (error) {
+			/* Private mode: the choice just won't outlive the tab. */
+		}
+	}
+}
+
 /* --- Start -------------------------------------------------------------- */
 
 document.addEventListener("DOMContentLoaded", () => {
 	applyTheme(document.documentElement.dataset.theme === "light" ? "light" : "dark", false);
+	applyLayout(document.documentElement.dataset.layout, false);
 
-	els.themeToggle.addEventListener("click", () => {
+	els.themeToggle?.addEventListener("click", () => {
 		applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light", true);
 	});
-
-	els.openForm.addEventListener("click", showriskform);
-	els.cancelForm.addEventListener("click", showriskform);
-	els.form.addEventListener("submit", handleRiskSubmit);
-
-	els.addChannel.addEventListener("click", () => openChannelForm(null));
-	els.cancelChannel.addEventListener("click", showchannelform);
-	els.deleteChannel.addEventListener("click", deleteChannel);
-	els.channelForm.addEventListener("submit", handleChannelSubmit);
-
-	els.channels.addEventListener("click", (event) => {
-		const button = event.target.closest("button[data-action]");
-		if (!button) return;
-		const index = Number(button.dataset.index);
-		if (!Number.isInteger(index)) return;
-		if (button.dataset.action === "edit") openChannelForm(index);
-		else if (button.dataset.action === "toggle") toggleChannel(index);
+	els.layoutChoice?.addEventListener("change", () => {
+		applyLayout(els.layoutChoice.value);
 	});
 
-	els.modal.addEventListener("click", (event) => {
-		if (event.target === els.modal) showriskform();
-	});
+	const settingsPage = document.body.dataset.page === "settings";
+	if (settingsPage) {
+		els.openForm.addEventListener("click", () => openRiskEditor("global"));
+		els.openBrokerRiskForm.addEventListener("click", () => openRiskEditor("quotex"));
+		els.cancelForm.addEventListener("click", showriskform);
+		els.form.addEventListener("submit", handleRiskSubmit);
+		els.riskProfile.addEventListener("change", () => {
+			riskEditorProfile = els.riskProfile.value;
+			prefillRiskForm();
+		});
 
-	els.channelModal.addEventListener("click", (event) => {
-		if (event.target === els.channelModal) showchannelform();
-	});
+		els.addChannel.addEventListener("click", () => openChannelForm(null));
+		els.cancelChannel.addEventListener("click", showchannelform);
+		els.deleteChannel.addEventListener("click", deleteChannel);
+		els.channelForm.addEventListener("submit", handleChannelSubmit);
+
+		els.channels.addEventListener("click", (event) => {
+			const button = event.target.closest("button[data-action]");
+			if (!button) return;
+			const index = Number(button.dataset.index);
+			if (!Number.isInteger(index)) return;
+			if (button.dataset.action === "edit") openChannelForm(index);
+			else if (button.dataset.action === "toggle") toggleChannel(index);
+		});
+
+		els.modal.addEventListener("click", (event) => {
+			if (event.target === els.modal) showriskform();
+		});
+
+		els.channelModal.addEventListener("click", (event) => {
+			if (event.target === els.channelModal) showchannelform();
+		});
+	} else {
+		els.brokers.addEventListener("click", (event) => {
+			const button = event.target.closest("button[data-broker-action]");
+			if (!button) return;
+			const brokerId = button.dataset.brokerId;
+			if (button.dataset.brokerAction === "connect") {
+				connectBroker(brokerId, button);
+			}
+		});
+	}
 
 	document.addEventListener("keydown", (event) => {
-		if (event.key !== "Escape") return;
-		if (!els.channelModal.classList.contains("hidden")) showchannelform();
-		else if (!els.modal.classList.contains("hidden")) showriskform();
+		if (!settingsPage) return;
+
+		const activeModal = !els.channelModal.classList.contains("hidden")
+			? els.channelModal
+			: !els.modal.classList.contains("hidden")
+				? els.modal
+				: null;
+		if (!activeModal) return;
+
+		if (event.key === "Escape") {
+			if (activeModal === els.channelModal) showchannelform();
+			else showriskform();
+			return;
+		}
+		if (event.key !== "Tab") return;
+
+		const dialog = activeModal.querySelector('[role="dialog"]');
+		const focusable = Array.from(dialog.querySelectorAll(
+			'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+		)).filter((element) => !element.hidden && element.getClientRects().length > 0);
+		if (!focusable.length) {
+			event.preventDefault();
+			return;
+		}
+
+		const first = focusable[0];
+		const last = focusable[focusable.length - 1];
+		if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+			event.preventDefault();
+			last.focus();
+		} else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+			event.preventDefault();
+			first.focus();
+		}
 	});
 
 	/* Refresh on return: polling pauses while the tab is in the background. */

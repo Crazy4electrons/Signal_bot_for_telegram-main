@@ -1,0 +1,116 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import asyncio
+from typing import Any
+from datetime import datetime, timezone
+
+from BinaryOptionsToolsV2.pocketoption import PocketOptionAsync
+
+from .base import Broker, TradePlacement
+
+BALANCE_TIMEOUT_SECONDS = 15
+
+
+@dataclass
+class PocketOptionBroker(Broker):
+    """Adapter for the existing Pocket Option workflow.
+
+    NOTE: This adapter is intentionally minimal and keeps compatibility
+    with the current martingale logic in main.py.
+    """
+
+    broker_id: str = "pocket_option"
+    _ssid: str | None = None
+    _client: PocketOptionAsync | None = None
+    _trade_timeframes: dict[str, int] | None = None
+
+    def __init__(self, *, broker_id: str, ssid: str) -> None:
+        self.broker_id = broker_id
+        self._ssid = ssid
+        self._client = None
+        self._trade_timeframes = {}
+
+    @property
+    def is_connected(self) -> bool:
+        if self._client is None:
+            return False
+        return bool(self._client.client.is_connected())
+
+    async def connect(self) -> bool:
+        if not self._ssid:
+            raise RuntimeError("PocketOption SSID is not configured")
+        self._client = PocketOptionAsync(self._ssid)
+        await self._client.connect()
+        await asyncio.wait_for(
+            self._client.balance(), timeout=BALANCE_TIMEOUT_SECONDS
+        )
+        return True
+
+    async def disconnect(self) -> None:
+        if self._client is not None:
+            client, self._client = self._client, None
+            await client.disconnect()
+
+    async def balance(self) -> float:
+        assert self._client is not None
+        return float(
+            await asyncio.wait_for(
+                self._client.balance(), timeout=BALANCE_TIMEOUT_SECONDS
+            )
+        )
+
+    async def place_call_put(
+        self,
+        *,
+        asset: str,
+        direction: str,
+        amount: float,
+        timeframe_seconds: int,
+        check_win: bool = False,
+    ) -> TradePlacement:
+        assert self._client is not None
+        # PocketOptionAsync expects buy/sell via api.buy/api.sell.
+        # main.py currently maps CALL->buy and PUT->sell.
+        if direction.upper() == "CALL":
+            buy_id, details = await self._client.buy(asset, amount, timeframe_seconds)
+        elif direction.upper() == "PUT":
+            buy_id, details = await self._client.sell(asset, amount, timeframe_seconds)
+        else:
+            raise ValueError(f"Unsupported direction {direction!r} for pocket")
+
+        # Pocket details model varies; preserve minimal fields.
+        # main.py already tracks entry/open_price/amount.
+        trade_id = str(buy_id)
+        if isinstance(details, dict):
+            entry_time = details.get("open_time") or details.get("openTime")
+            open_price = details.get("price") or details.get("open_price") or details.get("openPrice") or 0.0
+        else:
+            entry_time = None
+            open_price = 0.0
+        if isinstance(entry_time, str):
+            try:
+                entry_time = datetime.fromisoformat(entry_time)
+            except ValueError:
+                entry_time = None
+        if self._trade_timeframes is not None:
+            self._trade_timeframes[trade_id] = int(timeframe_seconds)
+        return TradePlacement(
+            trade_id=trade_id,
+            asset=asset,
+            direction=direction.upper(),
+            entry_time=entry_time or datetime.now(timezone.utc).replace(tzinfo=None),
+            level=0,
+            open_price=float(open_price),
+            amount=float(amount),
+        )
+
+    async def check_result(self, trade_id: str) -> dict[str, Any]:
+        assert self._client is not None
+        timeframe = (self._trade_timeframes or {}).get(trade_id, 300)
+        result = await self._client.check_win(
+            trade_id,
+            timeout_seconds=max(timeframe + 45, 90),
+        )
+        # Preserve existing main.py expectation: api.check_win(...) returns dict with 'result'
+        return result

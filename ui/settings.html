@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width,initial-scale=1" />
+	<meta name="color-scheme" content="dark light" />
+	<meta name="theme-color" content="#0E1418" />
+	<title>Signal Execution Desk · Settings</title>
+	<link rel="icon" href="/ui/favicon.svg" type="image/svg+xml" />
+	<link rel="preload" href="/ui/fonts/archivo-var-latin.woff2" as="font" type="font/woff2" crossorigin />
+	<link rel="preload" href="/ui/fonts/plex-mono-400-latin.woff2" as="font" type="font/woff2" crossorigin />
+	<script>
+		// Apply the stored theme before the first paint so the desk never
+		// flashes the wrong ground colour.
+		try {
+			var storedTheme = localStorage.getItem("signal-desk-theme");
+			if (storedTheme === "light" || storedTheme === "dark") {
+				document.documentElement.dataset.theme = storedTheme;
+			}
+			var storedLayout = localStorage.getItem("signal-desk-layout");
+			if (storedLayout === "stacked") {
+				document.documentElement.dataset.layout = storedLayout;
+			}
+		} catch (error) {
+			/* Private mode: keep the dark default. */
+		}
+	</script>
+	<link rel="stylesheet" href="/ui/styles.css" />
+</head>
+
+<body data-page="settings" data-layout="adaptive">
+	<a class="skip-link" href="#main">Skip to settings</a>
+
+	<header class="masthead">
+		<div class="masthead__brand">
+			<svg class="mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+				<rect x="2" y="13" width="5" height="9" />
+				<rect x="9.5" y="9" width="5" height="13" />
+				<rect x="17" y="2" width="5" height="20" />
+			</svg>
+			<h1 class="masthead__title">Signal Execution Desk</h1>
+		</div>
+
+		<div class="masthead__tools">
+			<p class="status" id="connection-state" data-state="pending">
+				<span class="status__dot" aria-hidden="true"></span>
+				<span class="status__label" id="connection-state-label" aria-live="polite">Connecting</span>
+				<span class="status__time" id="last-updated" aria-hidden="true">no reading yet</span>
+			</p>
+			<nav class="page-nav" aria-label="Main navigation">
+				<a href="/ui/">Live desk</a>
+				<a href="/ui/settings.html" aria-current="page">Settings</a>
+			</nav>
+			<label class="layout-choice">
+				<span>Panels</span>
+				<select id="layout-choice" aria-label="Broker panel layout">
+					<option value="adaptive">Adaptive</option>
+					<option value="stacked">Stacked</option>
+				</select>
+			</label>
+			<button class="icon-button" id="theme-toggle" type="button" aria-pressed="false"
+				aria-label="Switch to the light theme">
+				<svg class="icon-button__moon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+					<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" />
+				</svg>
+				<svg class="icon-button__sun" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+					<circle cx="12" cy="12" r="4.4" />
+					<path
+						d="M12 1.8v3.1M12 19.1v3.1M1.8 12h3.1M19.1 12h3.1M4.8 4.8l2.2 2.2M17 17l2.2 2.2M19.2 4.8 17 7M7 17l-2.2 2.2" />
+				</svg>
+			</button>
+		</div>
+	</header>
+
+	<main id="main">
+		<noscript>
+			<p class="notice">Settings need JavaScript to load and save configuration.</p>
+		</noscript>
+		<section class="region">
+			<h2 class="region__heading">Settings and routing</h2>
+			<p class="region__note">Configure Telegram channels and global risk limits. Each channel must choose its broker; neither broker is a fallback for the other.</p>
+		</section>
+
+		<div class="desk">
+			<div class="desk__rail">
+				<section class="region region--risk" aria-labelledby="risk-heading">
+					<h2 class="region__heading" id="risk-heading">Effective risk limits</h2>
+					<p class="region__note" id="risk-profile-meta">Global defaults apply to each broker unless overridden.</p>
+
+					<div class="ladder" id="risk-ladder">
+						<p class="ladder__caption">Worst case for one sequence</p>
+						<ol class="ladder__legs" id="ladder-legs">
+							<li class="ladder__leg ladder__leg--pending">Reading the limits&hellip;</li>
+						</ol>
+						<dl class="ladder__totals" id="ladder-totals"></dl>
+					</div>
+
+					<div class="data" id="risk-limits-state"></div>
+
+					<dl class="limits" id="risk-result">
+						<div class="limit">
+							<dt>Halt floor</dt>
+							<dd class="num" id="drawback_threshold-risk-result">&mdash;</dd>
+						</div>
+						<div class="limit">
+							<dt>Max trade amount</dt>
+							<dd class="num" id="max_trade_amount-risk-result">&mdash;</dd>
+						</div>
+						<div class="limit">
+							<dt>Exposure ceiling</dt>
+							<dd class="num" id="max_sequence_exposure-risk-result">&mdash;</dd>
+						</div>
+						<div class="limit">
+							<dt>Concurrent sequences</dt>
+							<dd class="num" id="max_open_trades-risk-result">&mdash;</dd>
+						</div>
+						<div class="limit">
+							<dt>Same asset</dt>
+							<dd class="num" id="max_open_trades_per_asset-risk-result">&mdash;</dd>
+						</div>
+						<div class="limit">
+							<dt>Same provider</dt>
+							<dd class="num" id="max_open_trades_per_provider-risk-result">&mdash;</dd>
+						</div>
+						<div class="limit">
+							<dt>Balance reserve</dt>
+							<dd class="num" id="min_balance_reserve-risk-result">&mdash;</dd>
+						</div>
+						<div class="limit">
+							<dt>Trade duration</dt>
+							<dd class="num" id="timeframe-risk-result">&mdash;</dd>
+						</div>
+						<div class="limit">
+							<dt>Timezone</dt>
+							<dd class="num" id="local_timezone-risk-result">&mdash;</dd>
+						</div>
+					</dl>
+
+					<div class="risk-actions">
+						<button class="button" id="set-risk-button" type="button">Edit global defaults</button>
+						<button class="button button--quiet" id="set-broker-risk-button" type="button">Broker overrides</button>
+					</div>
+					<p class="region__note">Every limit is re-checked before an order, including each recovery
+						leg.</p>
+				</section>
+			</div>
+		</div>
+
+		<section class="region" aria-labelledby="channels-heading">
+			<div class="region__bar">
+				<h2 class="region__heading" id="channels-heading">Signal channels</h2>
+				<button class="button" id="add-channel-button" type="button">Add channel</button>
+			</div>
+			<p class="region__note">The Telegram listener reads these channels. Saving writes the channel file
+				and reloads the listener, so nothing has to be restarted.</p>
+			<div class="data" id="channels-result">Loading&hellip;</div>
+			<div class="region__note" id="channels-problems" role="status"></div>
+		</section>
+
+	</main>
+
+	<div id="popup_bg" class="modal hidden">
+	<div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="risk-form-heading"
+		aria-describedby="risk-form-note">
+		<h2 class="modal__heading" id="risk-form-heading">Set risk limits</h2>
+		<p class="modal__note" id="risk-form-note">Global defaults apply to both brokers. Broker overrides change only the selected
+			fields for that broker; blank fields inherit the global value.</p>
+
+			<form id="risk-form-element">
+				<p class="form-error" id="risk-form-error" role="alert" hidden></p>
+
+				<div class="field field--wide">
+					<label for="risk-profile-input">Settings profile</label>
+					<select id="risk-profile-input" name="risk_profile">
+						<option value="global">Global defaults</option>
+						<option value="pocket_option">Pocket Option override</option>
+						<option value="quotex">Quotex override</option>
+					</select>
+					<p class="field__hint" id="risk-profile-hint">The selected settings apply from the next order
+						onward, including recovery legs.</p>
+				</div>
+
+				<div class="field">
+					<label for="initial_amount-input">Initial amount</label>
+					<input type="number" inputmode="decimal" min="0.01" step="any" id="initial_amount-input"
+						name="initial_amount" required />
+					<p class="field__hint">The first stake of every sequence.</p>
+				</div>
+
+				<div class="field">
+					<label for="martingale_levels-input">Martingale levels</label>
+					<input type="number" inputmode="numeric" min="0" step="1" id="martingale_levels-input"
+						name="martingale_levels" required />
+					<p class="field__hint">Recovery legs allowed after a loss. Zero ends the sequence instead.</p>
+				</div>
+
+				<div class="field">
+					<label for="martingale_multiplier-input">Martingale multiplier</label>
+					<input type="number" inputmode="decimal" min="1" step="any" id="martingale_multiplier-input"
+						name="martingale_multiplier" required />
+					<p class="field__hint">Each leg stakes this many times the leg before it.</p>
+				</div>
+
+				<div class="field">
+					<label for="timeframe-input">Trade duration (seconds)</label>
+					<input type="number" inputmode="numeric" min="1" step="any" id="timeframe-input" name="timeframe"
+						required />
+					<p class="field__hint">How long each trade stays open.</p>
+				</div>
+
+				<div class="field" id="risk-global-timezone-field">
+					<label for="local_timezone-input">Bot timezone offset from UTC</label>
+					<input type="text" id="local_timezone-input" name="local_timezone" placeholder="+2"
+						pattern="(\+|-)([0-9]|1[0-4])" required />
+					<p class="field__hint">Used to interpret channel entry times. Set each channel&rsquo;s timezone
+						in its channel settings.</p>
+				</div>
+
+				<div class="field">
+					<label for="drawback_threshold-input">Drawback threshold</label>
+					<input type="number" inputmode="decimal" min="1" step="1" id="drawback_threshold-input"
+						name="drawback_threshold" required />
+					<p class="field__hint">Halt the bot once today&rsquo;s P/L falls this far below zero.</p>
+				</div>
+
+				<div class="field">
+					<label for="martingale_enabled-input">Recovery trades</label>
+					<select id="martingale_enabled-input" name="martingale_enabled">
+						<option value="">Inherit global</option>
+						<option value="true">Enabled</option>
+						<option value="false">Disabled</option>
+					</select>
+				</div>
+
+				<div class="field">
+					<label for="max_trade_amount-input">Maximum trade amount</label>
+					<input type="number" min="0.01" step="any" id="max_trade_amount-input" name="max_trade_amount" />
+				</div>
+
+				<div class="field">
+					<label for="max_sequence_exposure-input">Maximum sequence exposure</label>
+					<input type="number" min="0.01" step="any" id="max_sequence_exposure-input" name="max_sequence_exposure" />
+				</div>
+
+				<div class="field">
+					<label for="max_open_trades-input">Maximum open sequences</label>
+					<input type="number" min="1" step="1" id="max_open_trades-input" name="max_open_trades" />
+				</div>
+
+				<div class="field">
+					<label for="max_open_trades_per_asset-input">Maximum per asset</label>
+					<input type="number" min="0" step="1" id="max_open_trades_per_asset-input" name="max_open_trades_per_asset" />
+				</div>
+
+				<div class="field">
+					<label for="max_open_trades_per_provider-input">Maximum per provider</label>
+					<input type="number" min="0" step="1" id="max_open_trades_per_provider-input" name="max_open_trades_per_provider" />
+				</div>
+
+				<div class="field">
+					<label for="stale_sequence_seconds-input">Stale sequence timeout (seconds)</label>
+					<input type="number" min="0" step="1" id="stale_sequence_seconds-input" name="stale_sequence_seconds" />
+				</div>
+
+				<div class="field">
+					<label for="min_balance_reserve-input">Minimum balance reserve</label>
+					<input type="number" min="0" step="any" id="min_balance_reserve-input" name="min_balance_reserve" />
+				</div>
+
+				<div class="modal__actions">
+					<button class="button button--quiet" type="button" id="cancel-risk-button">Cancel</button>
+					<button class="button" type="submit">Save limits</button>
+				</div>
+			</form>
+		</div>
+	</div>
+
+	<div id="channel-popup_bg" class="modal hidden">
+	<div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="channel-form-heading"
+		aria-describedby="channel-form-note">
+		<h2 class="modal__heading" id="channel-form-heading">Add channel</h2>
+		<p class="modal__note" id="channel-form-note">The listener reads with your Telegram account, so it can only see channels
+				that account already follows.</p>
+
+			<form id="channel-form-element">
+				<p class="form-error" id="channel-form-error" role="alert" hidden></p>
+
+				<div class="field field--wide">
+					<label for="channel-input">Channel id or @username</label>
+					<input type="text" id="channel-input" name="channel" required autocomplete="off"
+						spellcheck="false" placeholder="-1001234567890" />
+					<p class="field__hint">Run <span class="mono">python fetch_channels.py</span> to list the ids
+						your account can read.</p>
+				</div>
+
+				<div class="field">
+					<label for="channel-name-input">Label</label>
+					<input type="text" id="channel-name-input" name="name" autocomplete="off" />
+					<p class="field__hint">Shown on this desk and in the log. Optional.</p>
+				</div>
+
+				<div class="field">
+					<label for="channel-provider-input">Signal provider</label>
+					<input type="text" id="channel-provider-input" name="provider" autocomplete="off" />
+					<p class="field__hint">The name counted against the per-provider limit. Optional.</p>
+				</div>
+
+				<div class="field">
+					<label for="channel-broker-input">Trade destination</label>
+					<select id="channel-broker-input" name="broker" required>
+						<option value="" selected disabled>Select a broker</option>
+						<option value="pocket_option">Pocket Option</option>
+						<option value="quotex">Quotex</option>
+					</select>
+					<p class="field__hint">Every Telegram channel has its own destination; broker values in a signal
+						message do not override this choice.</p>
+				</div>
+
+				<div class="field field--wide">
+					<label for="channel-timezone-input">Timezone of the times it posts</label>
+					<select id="channel-timezone-input" name="timezone" required>
+						<option value="" selected disabled>Select the channel timezone</option>
+					</select>
+					<p class="field__hint">Pick the offset the channel writes in, for example
+						<span class="mono">GMT+2</span>. This timezone is used for every signal from this channel;
+						a wrong offset shifts every
+						entry time.</p>
+				</div>
+
+				<div class="field field--wide field--check">
+					<label for="channel-enabled-input">
+						<input type="checkbox" id="channel-enabled-input" name="enabled" checked />
+						Read this channel
+					</label>
+				</div>
+
+				<div class="modal__actions">
+					<button class="button button--quiet" type="button" id="delete-channel-button" hidden>Delete</button>
+					<button class="button button--quiet" type="button" id="cancel-channel-button">Cancel</button>
+					<button class="button" type="submit">Save channel</button>
+				</div>
+			</form>
+		</div>
+	</div>
+
+	<script src="/ui/script.js" defer></script>
+</body>
+
+</html>

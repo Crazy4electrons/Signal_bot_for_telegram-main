@@ -11,15 +11,17 @@ without copying ``.env``::
     {
       "channels": [
         {"name": "primary", "channel": "-1003559202666",
-         "timezone": "Etc/GMT-2", "provider": "telegram", "enabled": true},
-        {"channel": "@other_channel", "timezone": "Etc/GMT+4"}
+         "timezone": "Etc/GMT-2", "broker": "quotex",
+         "provider": "telegram", "enabled": true},
+        {"channel": "@other_channel", "timezone": "Etc/GMT+4",
+         "broker": "pocket_option"}
       ]
     }
 
-Each entry may be an object (as above) or a bare channel string. ``timezone``
-and ``provider`` are optional and default to ``SIGNAL_TIMEZONE`` and
-``TELEGRAM_SIGNAL_PROVIDER``. When the file is absent the legacy
-``TELEGRAM_SOURCE_CHANNEL`` variable is used instead.
+Each entry must be an object with an explicit ``timezone`` and ``broker``.
+``provider`` remains optional and defaults to ``TELEGRAM_SIGNAL_PROVIDER``.
+Bare channel strings and legacy single-channel configuration are surfaced as
+invalid until their timezone and broker are configured.
 """
 
 from __future__ import annotations
@@ -56,6 +58,7 @@ class ChannelConfig:
     channel: str
     timezone: str | None = None
     provider: str | None = None
+    broker: str | None = None
     name: str | None = None
     enabled: bool = True
 
@@ -115,7 +118,7 @@ def timezone_problem(timezone: str) -> str | None:
 
 
 def coerce_channel(entry: Any) -> tuple[ChannelConfig | None, str | None]:
-    """Build a ChannelConfig from one file entry, or explain why it is invalid."""
+    """Build a channel with explicit timezone and broker, or explain invalid settings."""
     if isinstance(entry, str):
         entry = {"channel": entry}
     if not isinstance(entry, dict):
@@ -124,15 +127,23 @@ def coerce_channel(entry: Any) -> tuple[ChannelConfig | None, str | None]:
     if not channel:
         return None, "entry has no 'channel' value"
     timezone = str(entry["timezone"]).strip() if entry.get("timezone") else None
-    if timezone:
-        problem = timezone_problem(timezone)
-        if problem:
-            return None, problem
+    if not timezone:
+        return None, "timezone must be configured for this channel"
+    problem = timezone_problem(timezone)
+    if problem:
+        return None, problem
+    broker = str(entry["broker"]).strip().lower().replace("-", "_") if entry.get("broker") else None
+    if not broker:
+        return None, "broker must be selected for this channel"
+    if broker not in {"pocket_option", "quotex"}:
+        return None, "broker must be 'pocket_option' or 'quotex'"
+
     return (
         ChannelConfig(
             channel=channel,
             timezone=timezone,
             provider=str(entry["provider"]).strip() if entry.get("provider") else None,
+            broker=broker,
             name=str(entry["name"]).strip() if entry.get("name") else None,
             enabled=bool(entry.get("enabled", True)),
         ),
@@ -147,6 +158,7 @@ def channel_to_dict(config: ChannelConfig) -> dict[str, Any]:
         "channel": config.channel,
         "timezone": config.timezone,
         "provider": config.provider,
+        "broker": config.broker,
         "enabled": config.enabled,
     }
 
@@ -194,6 +206,7 @@ def read_channel_entries(path: str | None = None) -> list[dict[str, Any]]:
                 "channel": str(raw.get("channel") or raw.get("id") or "").strip(),
                 "timezone": raw.get("timezone") or None,
                 "provider": raw.get("provider") or None,
+                "broker": raw.get("broker") or None,
                 "enabled": bool(raw.get("enabled", True)),
             }
         else:
@@ -228,6 +241,7 @@ def load_channel_set(path: str | None = None) -> ChannelSet:
             channel=entry["channel"],
             timezone=entry.get("timezone") or None,
             provider=entry.get("provider") or None,
+            broker=entry.get("broker") or None,
             name=entry.get("name") or None,
             enabled=bool(entry.get("enabled", True)),
         )
