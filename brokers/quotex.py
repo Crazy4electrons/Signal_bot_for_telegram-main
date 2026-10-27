@@ -37,17 +37,28 @@ class QuotexBroker(Broker):
         authorization_refresh = None
         if self.use_browser_session:
             from playwright_scraper import QuotexBrowserSession
+            from api_quotex.login import _infer_is_demo_from_ssid
 
             if self._browser_session is None:
                 self._browser_session = QuotexBrowserSession(
                     is_demo=self.is_demo,
                     headless=self.browser_headless,
                     timeout_seconds=self.browser_auth_timeout,
+                    email=os.getenv("QUOTEX_EMAIL"),
+                    password=os.getenv("QUOTEX_PASSWORD"),
                 )
-            if self._browser_session.is_started:
-                ssid = await self._browser_session.refresh_authorization()
+            saved_ssid = self.ssid or os.getenv("QUOTEX_SSID")
+            if saved_ssid and _infer_is_demo_from_ssid(
+                saved_ssid, default_demo=not self.is_demo
+            ) == self.is_demo:
+                ssid = saved_ssid
+                self.ssid = ssid
             else:
-                ssid = await self._browser_session.start()
+                if self._browser_session.is_started:
+                    ssid = await self._browser_session.refresh_authorization()
+                else:
+                    ssid = await self._browser_session.start()
+                self.ssid = ssid
             authorization_refresh = self._refresh_browser_authorization
         else:
             ssid = await self._get_fork_authorization()
@@ -62,11 +73,13 @@ class QuotexBroker(Broker):
         if not ok:
             keep_alive = self._client._keep_alive_manager
             websocket = getattr(keep_alive, "_websocket", None)
-            if getattr(websocket, "_last_auth_error", None):
+            auth_error = getattr(websocket, "_last_auth_error", None)
+            if auth_error or (self.use_browser_session and self.ssid):
                 account_type = "DEMO" if self.is_demo else "REAL"
                 if self.use_browser_session:
                     await self._client.disconnect()
                     ssid = await self._refresh_browser_authorization()
+                    self.ssid = ssid
                     self._client = AsyncQuotexClient(
                         ssid=ssid,
                         is_demo=self.is_demo,
@@ -97,7 +110,9 @@ class QuotexBroker(Broker):
     async def _refresh_browser_authorization(self) -> str:
         if self._browser_session is None:
             raise RuntimeError("Quotex browser session is not running")
-        return await self._browser_session.refresh_authorization()
+        ssid = await self._browser_session.refresh_authorization()
+        self.ssid = ssid
+        return ssid
 
     async def _refresh_fork_authorization(self) -> str:
         return await self._get_fork_authorization(force_refresh=True)

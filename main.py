@@ -475,8 +475,6 @@ def route_signal_to_broker(signal_data: SIGNAL_FIELDS) -> str:
 
 async def get_or_create_pocket_broker() -> Any:
     ssid = os.getenv("POCKETOPTION_SSID")
-    if not ssid:
-        raise RuntimeError("POCKETOPTION_SSID is not configured")
     broker = broker_registry.get("pocket_option")
     if broker is not None:
         return broker
@@ -484,7 +482,7 @@ async def get_or_create_pocket_broker() -> Any:
     # Adapter used by router + future multi-broker.
     from brokers.pocket_option import PocketOptionBroker
 
-    broker = PocketOptionBroker(broker_id="pocket_option", ssid=ssid)
+    broker = PocketOptionBroker(broker_id="pocket_option", ssid=ssid or None)
     broker_registry["pocket_option"] = broker
     return broker
 
@@ -547,7 +545,7 @@ async def ensure_broker_connected(broker_id: str) -> Any:
 
 
 async def ensure_broker_session(broker_id: str) -> None:
-    """Leave Quotex authorization to the fork's native saved-session login flow."""
+    """Capture a Pocket Option session only when no saved SSID is configured."""
     if broker_id == "quotex":
         return
 
@@ -563,18 +561,12 @@ async def ensure_broker_session(broker_id: str) -> None:
 
     email = os.getenv(f"{prefix}_EMAIL")
     password = os.getenv(f"{prefix}_PASSWORD")
-    if not email or not password:
-        raise RuntimeError(
-            f"{prefix}_SSID is missing; configure {prefix}_EMAIL and {prefix}_PASSWORD "
-            "or run playwright_scraper.py interactively first."
-        )
-
     from playwright_scraper import capture_session
 
     account_type = os.getenv(f"{prefix}_ACCOUNT_TYPE", "DEMO").upper()
     if broker_id == "quotex" and os.getenv("QUOTEX_IS_DEMO") is not None:
         account_type = "DEMO" if env_flag("QUOTEX_IS_DEMO") else "REAL"
-    headless = env_flag(f"{prefix}_SCRAPER_HEADLESS", True)
+    headless = env_flag(f"{prefix}_SCRAPER_HEADLESS", False)
     timeout_seconds = int(os.getenv(f"{prefix}_SCRAPER_TIMEOUT", "120"))
     await capture_session(
         broker_id,
@@ -1179,7 +1171,11 @@ async def get_closed_trades(broker_id: str):
 async def get_current_signals(broker_id: str):
     broker_id = normalise_broker_id(broker_id)
     signal_list = []
-    for signal in get_runtime_state().recent_signals(limit=50):
+    active_statuses = ("pending", "placing", "placed", "needs_review")
+    for signal in get_runtime_state().recent_signals(
+        limit=50,
+        statuses=active_statuses,
+    ):
         if signal.get("broker_id") != broker_id:
             continue
         signal_list.append(signal)

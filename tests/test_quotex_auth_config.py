@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import playwright_scraper
 from api_quotex.client import AsyncQuotexClient
 from api_quotex.connection_keep_alive import ConnectionKeepAlive, REGIONS as QUOTEX_REGIONS
 from api_quotex.exceptions import AuthenticationError, OrderError, WebSocketError
@@ -30,6 +31,29 @@ from playwright_scraper import (
 
 def test_quotex_browser_uses_official_sign_in_page() -> None:
     assert BROKER_CONFIG["quotex"]["url"] == "https://www.quotex.com/en/sign-in/"
+
+
+def test_capture_without_credentials_confirms_before_opening_browser(monkeypatch) -> None:
+    events = []
+
+    async def capture_browser(*_args, **_kwargs):
+        events.append("browser")
+        return {"ssid": "captured-session", "uid": "1", "is_demo": True}
+
+    monkeypatch.delenv("POCKETOPTION_EMAIL", raising=False)
+    monkeypatch.delenv("POCKETOPTION_PASSWORD", raising=False)
+    monkeypatch.setattr(
+        playwright_scraper,
+        "_confirm_manual_browser_login",
+        lambda _broker: events.append("confirmation"),
+    )
+    monkeypatch.setattr(playwright_scraper, "_capture_pocket_frame", capture_browser)
+    monkeypatch.setattr(playwright_scraper, "_save_broker_session", lambda *_args: None)
+
+    result = asyncio.run(capture_session("pocket_option", "DEMO"))
+
+    assert result["ssid"] == "captured-session"
+    assert events == ["confirmation", "browser"]
 
 
 def test_quotex_trade_url_matches_requested_account_mode() -> None:
@@ -441,6 +465,10 @@ def test_browser_auth_timeout_keeps_visible_profile_open(monkeypatch) -> None:
             lambda: FakePlaywrightManager(browser),
         )
         monkeypatch.setattr("playwright_scraper.resolve_edge_binary", lambda: "/edge")
+        monkeypatch.setattr(
+            "playwright_scraper._confirm_manual_browser_login",
+            lambda _broker: None,
+        )
 
         with pytest.raises(RuntimeError, match="browser remains open"):
             await manager.start()

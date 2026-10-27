@@ -19,7 +19,7 @@ from typing import Any, Callable
 from urllib.parse import urljoin, urlparse
 
 from dotenv import load_dotenv
-from playwright.async_api import async_playwright
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError, async_playwright
 
 load_dotenv()
 
@@ -143,10 +143,20 @@ def _listen_for_quotex_authorization(
 class QuotexBrowserSession:
     """Keep a persistent Quotex browser profile available for fresh auth frames."""
 
-    def __init__(self, is_demo: bool, *, headless: bool = False, timeout_seconds: int = 120):
+    def __init__(
+        self,
+        is_demo: bool,
+        *,
+        headless: bool = False,
+        timeout_seconds: int = 120,
+        email: str | None = None,
+        password: str | None = None,
+    ):
         self.is_demo = is_demo
         self.headless = headless
         self.timeout_seconds = timeout_seconds
+        self.email = email
+        self.password = password
         self._playwright: Any | None = None
         self._context: Any | None = None
         self._page: Any | None = None
@@ -161,6 +171,9 @@ class QuotexBrowserSession:
     async def start(self) -> str:
         if self.is_started:
             return await self.refresh_authorization()
+        if not (self.email and self.password):
+            _confirm_manual_browser_login("quotex")
+            self.headless = False
 
         try:
             self._playwright = await async_playwright().start()
@@ -186,11 +199,57 @@ class QuotexBrowserSession:
                 wait_until="commit",
                 timeout=45_000,
             )
+            try:
+                return await asyncio.wait_for(
+                    asyncio.shield(self._auth_future),
+                    timeout=min(self.timeout_seconds, 10),
+                )
+            except asyncio.TimeoutError:
+                pass
+
+            if self.email and self.password:
+                await self._sign_in_with_credentials()
             return await self._wait_for_authorization()
         except BaseException:
             if not self.is_started:
                 await self.close()
             raise
+
+    async def _sign_in_with_credentials(self) -> None:
+        page = self._page
+        email, password = self.email, self.password
+        if page is None or not email or not password:
+            raise RuntimeError("Quotex browser page is not available")
+
+        await page.goto(BROKER_CONFIG["quotex"]["url"], wait_until="commit", timeout=45_000)
+        login_form = page.locator('form[action*="sign-in" i]')
+        login_fields = login_form.locator(
+            'input[name="email"], input[name="username"], input[name="login"]'
+        ).first
+        await login_fields.wait_for(state="visible", timeout=self.timeout_seconds * 1000)
+        await login_fields.fill(email)
+        await login_form.locator('input[name="password"]').first.fill(password)
+        submit = login_form.locator(
+            'button[type="submit"], input[type="submit"], button:has-text("Sign in")'
+        ).first
+        await submit.click()
+        try:
+            await page.wait_for_url(
+                lambda url: "/sign-in" not in str(url),
+                timeout=min(self.timeout_seconds, 45) * 1000,
+            )
+        except PlaywrightTimeoutError as exc:
+            if await login_form.locator('input[name="password"]').count():
+                raise RuntimeError(
+                    "Quotex sign-in did not complete; the account page was not reached."
+                ) from exc
+
+        self._new_auth_future()
+        await page.goto(
+            _quotex_trade_url(self.is_demo),
+            wait_until="commit",
+            timeout=45_000,
+        )
 
     async def refresh_authorization(self) -> str:
         async with self._refresh_lock:
@@ -542,6 +601,21 @@ def _save_broker_session(broker: str, session: dict[str, Any]) -> None:
     _set_env_values(values)
 
 
+def _confirm_manual_browser_login(broker: str) -> None:
+    prefix = BROKER_CONFIG[broker]["prefix"]
+    if not sys.stdin.isatty():
+        raise RuntimeError(
+            f"{prefix}_EMAIL and {prefix}_PASSWORD are unavailable; refusing to open a "
+            "browser without confirmation. Configure both credentials or retry interactively."
+        )
+    answer = input(
+        f"No complete {prefix}_EMAIL/{prefix}_PASSWORD credentials are configured. "
+        f"Open the {broker.replace('_', ' ').title()} browser for manual sign-in? [y/N]: "
+    ).strip().lower()
+    if answer not in {"y", "yes"}:
+        raise RuntimeError("Manual browser sign-in was not confirmed.")
+
+
 async def _validate_quotex_session(session: dict[str, Any], is_demo: bool) -> bool:
     """Check a captured Quotex frame using the API's real websocket auth path."""
     from api_quotex.client import AsyncQuotexClient
@@ -745,6 +819,9 @@ async def capture_session(
     prefix = BROKER_CONFIG[broker]["prefix"]
     email = email or os.getenv(f"{prefix}_EMAIL")
     password = password or os.getenv(f"{prefix}_PASSWORD")
+    if not (email and password):
+        _confirm_manual_browser_login(broker)
+        headless = False
     is_demo = account_type == "DEMO"
     scraper = None
     session: dict[str, Any] | None = None

@@ -121,16 +121,16 @@ Global risk defaults and sparse per-broker overrides are saved to `risk_settings
 
 | Key | Required | Description |
 | --- | --- | --- |
-| `POCKETOPTION_SSID` | Required for Pocket trading | Pocket Option session frame captured by `playwright_scraper.py`. |
-| `POCKETOPTION_EMAIL` / `POCKETOPTION_PASSWORD` | No | Optional credentials for Cloudscraper/browser login during session capture. |
+| `POCKETOPTION_SSID` | No | Saved Pocket Option session frame; tried first and refreshed through Playwright if rejected or missing. |
+| `POCKETOPTION_EMAIL` / `POCKETOPTION_PASSWORD` | No | Optional credentials auto-filled during browser sign-in. Without both, the app asks before opening a browser for manual sign-in. |
 | `POCKETOPTION_ACCOUNT_TYPE` | No | `DEMO` or `REAL`; default `DEMO`. |
 | `POCKETOPTION_SCRAPER_HEADLESS` | No | Browser fallback visibility; default `false`. |
-| `QUOTEX_SSID` | No | Saved authorization frame used when `QUOTEX_BROWSER_SESSION=false`. |
-| `QUOTEX_EMAIL` / `QUOTEX_PASSWORD` | No | Credentials for the fork's login flow when `QUOTEX_BROWSER_SESSION=false`. |
+| `QUOTEX_SSID` | No | Saved authorization frame tried first; if rejected or missing, Playwright signs in and captures a fresh frame. |
+| `QUOTEX_EMAIL` / `QUOTEX_PASSWORD` | No | Optional credentials auto-filled during Playwright sign-in. Without both, the app asks before opening a browser for manual sign-in. |
 | `QUOTEX_ACCOUNT_TYPE` | No | `DEMO` or `REAL`; default `DEMO`. |
 | `QUOTEX_IS_DEMO` | No | Quotex demo/live setting used by the API adapter; default `true`. |
 | `QUOTEX_LANG` / `QUOTEX_REGIONS` | No | Login language and optional comma-separated API region names. |
-| `QUOTEX_BROWSER_SESSION` | No | Use the persistent Playwright Edge profile for Quotex authorization; default `true`. Set `false` to use the fork's native saved-session flow. |
+| `QUOTEX_BROWSER_SESSION` | No | Use the persistent Playwright Edge profile for Quotex authorization refresh; default `true`. Set `false` to use the fork's native login flow. |
 | `QUOTEX_PLAYWRIGHT_PROFILE` | No | Persistent browser profile directory; default `data/quotex-playwright` relative to the project, independent of the launch working directory. |
 | `QUOTEX_BROWSER_HEADLESS` | No | Run the app's persistent browser headless; default `false` so sign-in/CAPTCHA can be completed visibly. |
 | `QUOTEX_BROWSER_AUTH_TIMEOUT` | No | Seconds to wait for browser authorization; default `120`. |
@@ -256,8 +256,8 @@ proxy rather than opening it to the internet.
 
 The shared scraper is available for manual broker session capture. Pocket Option sessions are taken
 from its live websocket `auth` frame; Quotex sessions can be captured from the authenticated page's
-authorization frame. The running app uses the Quotex fork's saved-session and native WebSocket login
-flow by default; it does not need to keep the standalone scraper or a browser window open.
+authorization frame. At startup, the app tries each configured SSID first. If the SSID is missing or
+rejected, it falls back to Playwright and saves the captured session for reuse.
 
 ```bash
 uv run python playwright_scraper.py --broker pocket_option --account-type DEMO --headed
@@ -267,12 +267,12 @@ uv run python playwright_scraper.py --broker quotex --account-type DEMO --headed
 Use `--headless` to compare without displaying the browser. Command options `--email` and
 `--password` can provide credentials; otherwise the script reads broker-prefixed `.env` values and
 prompts interactively for any missing broker, account type, email, or password. Password prompts are
-masked. For service startup, `main.py` never prompts for credentials and initializes each broker
-independently, leaving the other broker available if one connection fails. Pocket Option uses its
-saved session from `.env`; Quotex uses the existing persistent Edge profile at
-`data/quotex-playwright` by default to capture server-confirmed authorization frames, then maintains
-the broker WebSocket without keeping a browser window open. The profile must already be signed in
-to the configured account mode; complete sign-in/CAPTCHA in the visible browser if prompted.
+masked. During app startup, credentials from `.env` are auto-filled when the broker login form is
+available. Without both credentials, the app asks for confirmation before opening a visible browser
+for manual sign-in; unattended service startup reports that confirmation is required instead of
+opening a browser. Each broker initializes independently, leaving the other broker available if one
+connection fails. Quotex uses the persistent Edge profile at `data/quotex-playwright` by default
+and maintains the broker WebSocket without keeping a browser window open.
 Set `QUOTEX_BROWSER_SESSION=false` to opt out and use the fork's saved-session login instead.
 
 Notes:
@@ -282,8 +282,7 @@ Notes:
   `QUOTEX_SCRAPER_HEADLESS`; `--headed` / `--headless` override them for a manual run.
 - Quotex uses the persistent Playwright authorization flow and stable profile path
   `data/quotex-playwright` by default. It may require a visible browser for sign-in/CAPTCHA.
-  Keep the browser profile private. `QUOTEX_SSID` and login credentials are only needed when
-  opting out with `QUOTEX_BROWSER_SESSION=false`.
+  Keep the browser profile private along with saved SSIDs and login credentials.
 - Never share or commit `.env`, broker browser profiles, or the Telegram session file.
 
 ---

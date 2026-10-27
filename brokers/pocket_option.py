@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import asyncio
+import logging
+import os
 from typing import Any
 from datetime import datetime, timezone
 
@@ -10,6 +12,7 @@ from BinaryOptionsToolsV2.pocketoption import PocketOptionAsync
 from .base import Broker, TradePlacement
 
 BALANCE_TIMEOUT_SECONDS = 15
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -25,7 +28,7 @@ class PocketOptionBroker(Broker):
     _client: PocketOptionAsync | None = None
     _trade_timeframes: dict[str, int] | None = None
 
-    def __init__(self, *, broker_id: str, ssid: str) -> None:
+    def __init__(self, *, broker_id: str, ssid: str | None) -> None:
         self.broker_id = broker_id
         self._ssid = ssid
         self._client = None
@@ -38,13 +41,44 @@ class PocketOptionBroker(Broker):
         return bool(self._client.client.is_connected())
 
     async def connect(self) -> bool:
-        if not self._ssid:
-            raise RuntimeError("PocketOption SSID is not configured")
-        self._client = PocketOptionAsync(self._ssid)
-        await self._client.connect()
-        await asyncio.wait_for(
-            self._client.balance(), timeout=BALANCE_TIMEOUT_SECONDS
+        ssid = self._ssid or os.getenv("POCKETOPTION_SSID")
+        if ssid:
+            try:
+                return await self._connect_with_ssid(ssid)
+            except Exception as exc:
+                logger.warning(
+                    "Saved Pocket Option authorization could not be verified; "
+                    "attempting browser sign-in (%s)",
+                    type(exc).__name__,
+                )
+
+        from playwright_scraper import capture_session
+
+        account_type = os.getenv("POCKETOPTION_ACCOUNT_TYPE", "DEMO").strip().upper()
+        session = await capture_session(
+            "pocket_option",
+            account_type,
+            email=os.getenv("POCKETOPTION_EMAIL"),
+            password=os.getenv("POCKETOPTION_PASSWORD"),
+            headless=os.getenv("POCKETOPTION_SCRAPER_HEADLESS", "false").strip().lower()
+            in {"1", "true", "yes", "on"},
+            timeout_seconds=int(os.getenv("POCKETOPTION_SCRAPER_TIMEOUT", "120")),
         )
+        self._ssid = str(session["ssid"])
+        return await self._connect_with_ssid(self._ssid)
+
+    async def _connect_with_ssid(self, ssid: str) -> bool:
+        client = PocketOptionAsync(ssid)
+        self._client = client
+        try:
+            await client.connect()
+            await asyncio.wait_for(
+                client.balance(), timeout=BALANCE_TIMEOUT_SECONDS
+            )
+        except Exception:
+            self._client = None
+            await client.disconnect()
+            raise
         return True
 
     async def disconnect(self) -> None:

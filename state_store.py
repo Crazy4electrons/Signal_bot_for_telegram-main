@@ -130,18 +130,32 @@ class SignalBotStateStore:
                 (status, datetime.now(timezone.utc).isoformat(), signal_id),
             )
 
-    def recent_signals(self, limit: int = 20) -> list[dict[str, Any]]:
+    def recent_signals(
+        self,
+        limit: int = 20,
+        *,
+        statuses: tuple[str, ...] | None = None,
+    ) -> list[dict[str, Any]]:
         if limit < 1:
             raise ValueError("limit must be greater than zero")
+        if statuses == ():
+            return []
+        status_filter = ""
+        parameters: tuple[Any, ...] = (limit,)
+        if statuses is not None:
+            placeholders = ", ".join("?" for _ in statuses)
+            status_filter = f"WHERE status IN ({placeholders})"
+            parameters = (*statuses, limit)
         with self._lock, self._connect() as connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT signal_id, status, payload
                 FROM runtime_signals
+                {status_filter}
                 ORDER BY created_at DESC, signal_id DESC
                 LIMIT ?
                 """,
-                (limit,),
+                parameters,
             ).fetchall()
         return [
             {

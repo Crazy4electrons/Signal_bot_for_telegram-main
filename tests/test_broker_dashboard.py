@@ -97,6 +97,38 @@ def test_pocket_option_connect_establishes_socket_before_balance(monkeypatch):
     assert calls == ["connect", "balance"]
 
 
+def test_pocket_option_retries_rejected_ssid_with_browser_capture(monkeypatch):
+    used_ssids = []
+
+    class FakeClient:
+        def __init__(self, ssid):
+            used_ssids.append(ssid)
+            self.client = SimpleNamespace(is_connected=lambda: True)
+
+        async def connect(self):
+            pass
+
+        async def balance(self):
+            if used_ssids[-1] == "stale-session":
+                raise RuntimeError("session rejected")
+            return 42.5
+
+        async def disconnect(self):
+            pass
+
+    async def capture_session(*_args, **_kwargs):
+        return {"ssid": "fresh-session", "uid": "1", "is_demo": True}
+
+    monkeypatch.setattr("brokers.pocket_option.PocketOptionAsync", FakeClient)
+    monkeypatch.setattr("playwright_scraper.capture_session", capture_session)
+    monkeypatch.setenv("POCKETOPTION_SCRAPER_HEADLESS", "false")
+    broker = PocketOptionBroker(broker_id="pocket_option", ssid="stale-session")
+
+    assert asyncio.run(broker.connect()) is True
+    assert used_ssids == ["stale-session", "fresh-session"]
+    assert broker._ssid == "fresh-session"
+
+
 def test_quotex_uses_existing_browser_profile_by_default(monkeypatch):
     monkeypatch.setattr(main, "broker_registry", {})
     monkeypatch.setenv("QUOTEX_IS_DEMO", "true")
@@ -111,6 +143,43 @@ def test_quotex_uses_existing_browser_profile_by_default(monkeypatch):
     assert broker.use_browser_session is True
     assert broker.browser_headless is False
     assert broker.browser_auth_timeout == 120
+
+
+def test_quotex_uses_saved_ssid_then_refreshes_after_auth_rejection(monkeypatch):
+    stale_ssid = '42["authorization",{"session":"stale","isDemo":1,"tournamentId":0}]'
+    used_ssids = []
+
+    class FakeClient:
+        def __init__(self, *, ssid, **_kwargs):
+            self.ssid = ssid
+            used_ssids.append(ssid)
+            self._keep_alive_manager = SimpleNamespace(
+                _websocket=SimpleNamespace(
+                    _last_auth_error={"message": "Invalid SSID"}
+                    if ssid == stale_ssid
+                    else None
+                )
+            )
+
+        async def connect(self, **_kwargs):
+            return self.ssid == "fresh-session"
+
+        async def disconnect(self):
+            pass
+
+    class FakeBrowserSession:
+        is_started = False
+
+        async def refresh_authorization(self):
+            return "fresh-session"
+
+    monkeypatch.setattr("brokers.quotex.AsyncQuotexClient", FakeClient)
+    broker = QuotexBroker(ssid=stale_ssid, is_demo=True)
+    broker._browser_session = FakeBrowserSession()
+
+    assert asyncio.run(broker.connect()) is True
+    assert used_ssids == [stale_ssid, "fresh-session"]
+    assert broker.ssid == "fresh-session"
 
 
 def test_quotex_can_opt_out_of_existing_browser_profile(monkeypatch):
@@ -360,6 +429,38 @@ def test_current_signals_are_filtered_by_broker(tmp_path, monkeypatch):
     body = response_body(asyncio.run(main.get_current_signals("quotex")))
 
     assert [signal["signal_provider"] for signal in body["signals"]] == ["beta"]
+
+
+def test_current_signals_hide_completed_and_failed_sequences(tmp_path, monkeypatch):
+    store = main.SignalBotStateStore(tmp_path / "state.sqlite3")
+    monkeypatch.setattr(main, "runtime_state", store)
+    payload = main.SIGNAL_FIELDS(
+        signal_provider="alpha",
+        asset="EURUSD",
+        direction="CALL",
+        entry_time=main.datetime.now(),
+        broker_id="quotex",
+    ).model_dump(mode="json")
+    for signal_id, status in (
+        ("pending-signal", "pending"),
+        ("active-sequence", "placed"),
+        ("completed-sequence", "completed"),
+        ("rejected-signal", "rejected"),
+        ("failed-sequence", "failed"),
+        ("interrupted-signal", "interrupted"),
+    ):
+        store.save_signal(signal_id, status, payload)
+
+    response = response_body(asyncio.run(main.get_current_signals("quotex")))
+
+    assert {signal["signal_id"] for signal in response["signals"]} == {
+        "pending-signal",
+        "active-sequence",
+    }
+    assert {
+        signal["signal_id"]: signal["status"]
+        for signal in store.recent_signals()
+    }["completed-sequence"] == "completed"
 
 
 def test_signal_without_explicit_broker_has_no_fallback(monkeypatch):
