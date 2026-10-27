@@ -6,14 +6,16 @@
       "channel": "-1003559202666",
       "timezone": "Etc/GMT+3",
       "provider": "Magic Trader",
+      "broker": "quotex",
       "enabled": true
     },
     {
-        "name": "Lorenzo",
-        "channel": "-1002074799242",
-        "timezone": "Etc/GMT-2",
-        "provider": "Lorenzo",
-        "enabled": true
+      "name": "Lorenzo",
+      "channel": "-1002074799242",
+      "timezone": "Etc/GMT+0",
+      "provider": "Lorenzo",
+      "broker": "pocket_option",
+      "enabled": true
     }
   ]
 }

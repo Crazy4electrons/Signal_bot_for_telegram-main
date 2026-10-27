@@ -1,153 +1,180 @@
-# test.py
+"""Send one explicitly confirmed test signal to a configured DEMO broker."""
+
+import argparse
+import json
 import os
+import re
+from datetime import datetime, timedelta
+from uuid import uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
-import json
-import time
-from datetime import datetime, timedelta
-
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- Configuration ---
-# Optional: override the port the app listens on.
-# --- End Configuration ---
-
-# Base notification template
-NOTIFICATION_TEMPLATE = """
-{asset_emoji} {asset_pair} {country_emoji} OTC
-🕘 Expiration 5M
-⏺ Entry at {entry_time}
-{direction_emoji} {direction_text}
+BROKERS = ("pocket_option", "quotex")
+SIGNAL_TEMPLATE = """{asset} OTC
+Expiration 5M
+Entry at {entry_time}
+{direction}
 signal_provider="{signal_provider}"
 timezone="{timezone}"
+broker="{broker_id}"
 """
 
-def get_asset_emojis(asset_pair:str):
-    """Simple mapping for common asset emojis."""
-    
-    emojis = {
-        "EUR/USD": ("🇪🇺", "🇺🇸"),
-        "GBP/JPY": ("🇬🇧", "🇯🇵"),
-        "USD/JPY": ("🇺🇸", "🇯🇵"),
-        "AUD/USD": ("🇦🇺", "🇺🇸"),
-        "USD/CHF": ("🇺🇸", "🇨🇭"),
-        "GBPCHF": ("🇬🇧", "🇨🇭"), # For assets without slash
-        # Add more mappings as needed
-    }
-    # Handle assets given without a slash (e.g., GBPCHF)
-    if '/' not in asset_pair and len(asset_pair) == 6:
-        base_pair = asset_pair[:3] + '/' + asset_pair[3:]
-        return emojis.get(base_pair, ("❓", "❓"))
-    
-    return emojis.get(asset_pair, ("❓", "❓"))
 
-def get_direction_emoji(direction_text):
-    """Simple mapping for direction emojis."""
-    if direction_text.upper() == "BUY":
-        return "🟩"
-    elif direction_text.upper() == "SELL":
-        return "🟥"
-    return "❓"
-
-def get_next_5min_interval_time(current_time_str=None):
-    """
-    Calculates the next 5-minute interval time (HH:MM) based on current local time.
-    Useful for simulating subsequent Martingale entries.
-    """
-    if current_time_str:
-        # If a specific time is provided, parse it
-        try:
-            now = datetime.strptime(current_time_str, "%H:%M")
-        except ValueError:
-            print("Invalid time format. Using current time.")
-            now = datetime.now()
-    else:
-        now = datetime.now()
-
-    # Add 5 minutes to current time
-    next_time = now + timedelta(minutes=5)
-    
-    # Round down to the nearest 5-minute interval
-    # This ensures it aligns with 00, 05, 10, etc. minutes
-    # However, your requirement is "enter exactly at 19:27", so we'll just add 5 mins.
-    # If you wanted to snap to the next 5-min mark, it would be:
-    # next_time_minute = (next_time.minute // 5) * 5
-    # next_time = next_time.replace(minute=next_time_minute, second=0, microsecond=0)
-    
-    return next_time.strftime("%H:%M")
+def fetch_json(base_url: str, path: str) -> dict:
+    response = requests.get(f"{base_url.rstrip('/')}{path}", timeout=10)
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise ValueError(f"Expected an object from {path}")
+    return payload
 
 
-def send_test_signal(asset_pair:str,direction_text:str,signal_provider:str,port:str,timezone:str="Etc/GMT-2"):
-    """
-    Prompts user for signal details, constructs notification, and sends it.
-    """
-    print("\n--- Send New Test Signal ---")
-    
-    
-    direction_text = direction_text.upper()
-    
-    # Suggest next entry time
-    suggested_time = get_next_5min_interval_time()
-    entry_time = input(f"Enter Entry Time (HH:MM, e.g., {suggested_time}): ").strip()
+def validate_demo_account(base_url: str, broker_id: str) -> tuple[dict, dict]:
+    status_payload = fetch_json(base_url, "/broker_status")
+    broker = next(
+        (item for item in status_payload.get("brokers", []) if item.get("id") == broker_id),
+        None,
+    )
+    if broker is None:
+        raise RuntimeError(f"Server did not report broker {broker_id!r}")
+    if broker.get("account_type") != "DEMO":
+        raise RuntimeError(
+            f"Refusing to send: {broker_id} is configured as "
+            f"{broker.get('account_type')!r}, not DEMO."
+        )
+    if not broker.get("configured"):
+        raise RuntimeError(f"{broker_id} has no configured session on the server.")
 
-    asset_emoji1, asset_emoji2 = get_asset_emojis(asset_pair)
-    direction_emoji = get_direction_emoji(direction_text)
+    risk_payload = fetch_json(base_url, f"/get_risk_management?broker_id={broker_id}")
+    risk = risk_payload.get("risk_values")
+    if not isinstance(risk, dict):
+        raise ValueError("Server did not return effective broker risk settings.")
+    return broker, risk
 
-    notification_content = NOTIFICATION_TEMPLATE.format(
-        asset_emoji=asset_emoji1,
-        asset_pair=asset_pair,
-        country_emoji=asset_emoji2,
+
+def default_entry_time(timezone: str) -> str:
+    try:
+        now = datetime.now(ZoneInfo(timezone))
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError(f"Unknown timezone: {timezone}") from exc
+    return (now + timedelta(minutes=2)).strftime("%H:%M")
+
+
+def format_signal(
+    asset: str,
+    direction: str,
+    entry_time: str,
+    timezone: str,
+    broker_id: str,
+    signal_provider: str,
+) -> str:
+    if not re.fullmatch(r"[A-Z]{3}/[A-Z]{3}", asset):
+        raise ValueError("Asset must use the format EUR/USD.")
+    if direction not in {"CALL", "PUT"}:
+        raise ValueError("Direction must be CALL or PUT.")
+    if not re.fullmatch(r"(?:[01]?\d|2[0-3]):[0-5]\d", entry_time):
+        raise ValueError("Entry time must use 24-hour HH:MM format.")
+    try:
+        ZoneInfo(timezone)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError(f"Unknown timezone: {timezone}") from exc
+    return SIGNAL_TEMPLATE.format(
+        asset=asset,
+        direction=direction,
         entry_time=entry_time,
-        direction_emoji=direction_emoji,
-        direction_text=direction_text,
+        timezone=timezone,
+        broker_id=broker_id,
         signal_provider=signal_provider,
-        timezone=timezone
     ).strip()
 
-    print("\n--- Generated Notification Content ---")
-    print(notification_content)
-    print("------------------------------------")
-    WEBHOOK_URL = f"http://localhost:{port}/trade_signal"
-    headers = {'Content-Type': 'text/plain'}
+
+def send_test_signal(
+    base_url: str,
+    broker_id: str,
+    broker: dict,
+    risk: dict,
+    asset: str,
+    direction: str,
+    entry_time: str,
+) -> None:
+    timezone = str(risk.get("local_timezone", "Etc/GMT-2"))
+    signal_provider = f"test-signal-{uuid4().hex[:8]}"
+    signal_text = format_signal(
+        asset, direction, entry_time, timezone, broker_id, signal_provider
+    )
+
+    initial_amount = float(risk["initial_amount"])
+    levels = int(risk["martingale_levels"]) if risk["martingale_enabled"] else 0
+    multiplier = float(risk["martingale_multiplier"]) if levels else 1.0
+    exposure = sum(initial_amount * multiplier**level for level in range(levels + 1))
+
+    print(f"Broker: {broker_id} ({broker['account_type']}), configured={broker['configured']}")
+    print(f"Initial stake: {initial_amount:g}; martingale levels: {levels}; max sequence exposure: {exposure:g}")
+    print("\nSignal that will be submitted:\n")
+    print(signal_text)
+    print(
+        "\nThis webhook can place a real DEMO order and may automatically place "
+        "martingale recovery orders according to the displayed settings."
+    )
+    confirmation = input(f'Type "PLACE DEMO TRADE" to continue: ').strip()
+    if confirmation != "PLACE DEMO TRADE":
+        print("Cancelled; no signal was sent.")
+        return
+
+    headers = {"Content-Type": "text/plain"}
     secret = os.getenv("WEBHOOK_SECRET", "").strip()
     if secret:
-        headers['x-webhook-secret'] = secret
+        headers["x-webhook-secret"] = secret
+
+    response = requests.post(
+        f"{base_url.rstrip('/')}/trade_signal",
+        data=signal_text,
+        headers=headers,
+        timeout=15,
+    )
     try:
-        print(f"Sending POST request to: {WEBHOOK_URL}")
-        response = requests.post(WEBHOOK_URL, data=notification_content, headers=headers)
+        response_body = json.dumps(response.json(), indent=2)
+    except requests.exceptions.JSONDecodeError:
+        response_body = response.text
+    print(f"HTTP {response.status_code}\n{response_body}")
+    response.raise_for_status()
 
-        print("\n--- Webhook Response ---")
-        print(f"Status Code: {response.status_code}")
-        if response.status_code == 401:
-            print("401 Unauthorized: WEBHOOK_SECRET does not match the server value.")
-        try:
-            print(f"Response Body: {json.dumps(response.json(), indent=2)}")
-        except json.JSONDecodeError:
-            print(f"Response Body (raw): {response.text}")
-        print("------------------------")
 
-    except requests.exceptions.ConnectionError as e:
-        print("\nERROR: Could not connect to the webhook URL. Is the app running?")
-        print(f"Details: {e}")
-    except Exception as e:
-        print(f"\nAn unexpected error occurred: {e}")
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Send a test signal to a broker the server reports as DEMO."
+    )
+    parser.add_argument("--url", default="http://127.0.0.1:9634", help="Base URL of the running bot.")
+    parser.add_argument("--broker", choices=BROKERS, required=True)
+    parser.add_argument("--asset", default="EUR/USD", help="Pair in BASE/QUOTE format.")
+    parser.add_argument("--direction", choices=("CALL", "PUT"), required=True)
+    parser.add_argument(
+        "--entry-time",
+        help="24-hour HH:MM in the broker's configured local timezone (default: two minutes from now).",
+    )
+    args = parser.parse_args()
+
+    try:
+        broker, risk = validate_demo_account(args.url, args.broker)
+        timezone = str(risk.get("local_timezone", "Etc/GMT-2"))
+        entry_time = args.entry_time or default_entry_time(timezone)
+        print(f"Verified configured account: {args.broker} {broker['account_type']}")
+        send_test_signal(
+            args.url,
+            args.broker,
+            broker,
+            risk,
+            args.asset.upper(),
+            args.direction,
+            entry_time,
+        )
+    except (requests.RequestException, RuntimeError, ValueError, KeyError) as exc:
+        parser.error(str(exc))
+
 
 if __name__ == "__main__":
-    print("Welcome to the Signal Test Sender!")
-    print("Make sure the app is running (uvicorn main:app).")
-    asset_pair = input("Enter Asset Pair (e.g., EUR/USD): ").strip().upper()
-    direction_text = input("Enter Direction (BUY or SELL): ").strip().upper()
-    signal_provider = input("Enter Signal Provider: ").strip()
-    port = input("Enter Port (default 9634): ").strip() or "9634"
-    timezone = input("Enter Timezone (default Etc/GMT-2): ").strip() or "Etc/GMT-2"
-    print(f"Signals will be sent to: http://localhost:{port}/trade_signal")
-    send_test_signal(asset_pair=asset_pair,direction_text=direction_text,signal_provider=signal_provider,port=port,timezone=timezone)
-    while True:
-        choice = input("\nSend same signal with different time? (y/n): ").strip().lower()
-        if choice != 'y':
-            break
-        send_test_signal(asset_pair=asset_pair,direction_text=direction_text,signal_provider=signal_provider,port=port)
-
-    print("Exiting test sender.")
+    main()
