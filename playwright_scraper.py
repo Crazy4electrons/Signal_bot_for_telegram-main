@@ -65,6 +65,24 @@ def _is_quotex_trade_page(url: str, is_demo: bool) -> bool:
     return path == expected_path
 
 
+async def _is_quotex_cloudflare_challenge(page: Any) -> bool:
+    page_state = await page.evaluate(
+        """() => ({
+          title: document.title,
+          text: (document.body?.innerText || '').slice(0, 1200),
+          challengeFrame: Boolean(document.querySelector(
+            'iframe[src*="challenges.cloudflare.com"], #challenge-form, #cf-challenge-running'
+          ))
+        })"""
+    )
+    title = str(page_state.get("title", "")).lower()
+    text = str(page_state.get("text", "")).lower()
+    return page_state.get("challengeFrame", False) or (
+        "just a moment" in title
+        and ("security verification" in text or "cloudflare" in text)
+    )
+
+
 def _quotex_socket_event(payload: str | bytes) -> tuple[str, Any] | None:
     if isinstance(payload, bytes):
         payload = payload.decode("utf-8", errors="replace")
@@ -221,7 +239,17 @@ class QuotexBrowserSession:
         if page is None or not email or not password:
             raise RuntimeError("Quotex browser page is not available")
 
-        await page.goto(BROKER_CONFIG["quotex"]["url"], wait_until="commit", timeout=45_000)
+        await page.goto(
+            BROKER_CONFIG["quotex"]["url"],
+            wait_until="domcontentloaded",
+            timeout=45_000,
+        )
+        if await _is_quotex_cloudflare_challenge(page):
+            raise RuntimeError(
+                "Quotex blocked automated sign-in with a Cloudflare security challenge. "
+                "Complete verification in the visible persistent browser, then retry the "
+                "broker connection."
+            )
         login_form = page.locator('form[action*="sign-in" i]')
         login_fields = login_form.locator(
             'input[name="email"], input[name="username"], input[name="login"]'

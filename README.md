@@ -132,7 +132,7 @@ Global risk defaults and sparse per-broker overrides are saved to `risk_settings
 | `QUOTEX_LANG` / `QUOTEX_REGIONS` | No | Login language and optional comma-separated API region names. |
 | `QUOTEX_BROWSER_SESSION` | No | Use the persistent Playwright Edge profile for Quotex authorization refresh; default `true`. Set `false` to use the fork's native login flow. |
 | `QUOTEX_PLAYWRIGHT_PROFILE` | No | Persistent browser profile directory; default `data/quotex-playwright` relative to the project, independent of the launch working directory. |
-| `QUOTEX_BROWSER_HEADLESS` | No | Run the app's persistent browser headless; default `false` so sign-in/CAPTCHA can be completed visibly. |
+| `QUOTEX_BROWSER_HEADLESS` | No | Run the app's persistent browser headless; by default it is headless without a display and visible when a desktop display is available. Set `true` or `false` to override. |
 | `QUOTEX_BROWSER_AUTH_TIMEOUT` | No | Seconds to wait for browser authorization; default `120`. |
 | `QUOTEX_SCRAPER_HEADLESS` | No | Browser visibility for standalone session capture; default `false`. |
 | `WEBHOOK_SECRET` | Yes when exposed | Shared secret required by `POST /trade_signal`. |

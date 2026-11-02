@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width,initial-scale=1" />
+	<meta name="color-scheme" content="dark light" />
+	<meta name="theme-color" content="#0E1418" />
+	<title>Signal Execution Desk · Trade history</title>
+	<link rel="icon" href="/ui/favicon.svg" type="image/svg+xml" />
+	<link rel="preload" href="/ui/fonts/archivo-var-latin.woff2" as="font" type="font/woff2" crossorigin />
+	<link rel="preload" href="/ui/fonts/plex-mono-400-latin.woff2" as="font" type="font/woff2" crossorigin />
+	<script>
+		try {
+			var storedTheme = localStorage.getItem("signal-desk-theme");
+			if (storedTheme === "light" || storedTheme === "dark") {
+				document.documentElement.dataset.theme = storedTheme;
+			}
+		} catch (error) {}
+	</script>
+	<link rel="stylesheet" href="/ui/styles.css" />
+</head>
+
+<body data-page="history" data-layout="adaptive">
+	<a class="skip-link" href="#main">Skip to trade history</a>
+
+	<header class="masthead">
+		<div class="masthead__brand">
+			<svg class="mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+				<rect x="2" y="13" width="5" height="9" />
+				<rect x="9.5" y="9" width="5" height="13" />
+				<rect x="17" y="2" width="5" height="20" />
+			</svg>
+			<h1 class="masthead__title">Signal Execution Desk</h1>
+		</div>
+		<div class="masthead__tools">
+			<p class="status" id="connection-state" data-state="pending">
+				<span class="status__dot" aria-hidden="true"></span>
+				<span class="status__label" id="connection-state-label" aria-live="polite">Connecting</span>
+				<span class="status__time" id="last-updated" aria-hidden="true">no reading yet</span>
+			</p>
+			<nav class="page-nav" aria-label="Main navigation">
+				<a href="/ui/">Live desk</a>
+				<a href="/ui/history.html" aria-current="page">History</a>
+				<a href="/ui/settings.html">Settings</a>
+			</nav>
+			<button class="icon-button" id="theme-toggle" type="button" aria-pressed="false"
+				aria-label="Switch to the light theme">
+				<svg class="icon-button__moon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+					<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" />
+				</svg>
+				<svg class="icon-button__sun" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+					<circle cx="12" cy="12" r="4.4" />
+					<path d="M12 1.8v3.1M12 19.1v3.1M1.8 12h3.1M19.1 12h3.1M4.8 4.8l2.2 2.2M17 17l2.2 2.2M19.2 4.8 17 7M7 17l-2.2 2.2" />
+				</svg>
+			</button>
+		</div>
+	</header>
+
+	<main id="main">
+		<section class="region region--account">
+			<h2 class="region__heading">Trade history</h2>
+			<p class="region__note">Settled trades from both brokers, newest first.</p>
+		</section>
+		<form class="history-filter" id="history-filter">
+			<label for="history-from">From</label>
+			<input id="history-from" name="from" type="datetime-local" />
+			<label for="history-to">To</label>
+			<input id="history-to" name="to" type="datetime-local" />
+			<button class="button" type="submit">Filter history</button>
+			<button class="button button--quiet" type="reset">Clear</button>
+		</form>
+		<div class="broker-workspaces" id="broker-workspaces">
+			<p class="broker-loading">Loading trade history&hellip;</p>
+		</div>
+	</main>
+
+	<script src="/ui/script.js" defer></script>
+</body>
+
+</html>

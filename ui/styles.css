@@ -438,6 +438,94 @@ html[data-layout="stacked"] .broker-workspaces {
 	padding-top: var(--space-4);
 }
 
+.activity-disclosure {
+	display: grid;
+	gap: var(--space-3);
+	border-top: 1px solid var(--rule);
+	padding-top: var(--space-4);
+}
+
+.activity-disclosure > summary {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	font-size: 16px;
+	font-weight: 600;
+	letter-spacing: -0.005em;
+	cursor: pointer;
+	list-style: none;
+}
+
+.activity-disclosure > summary::-webkit-details-marker {
+	display: none;
+}
+
+.activity-disclosure > summary::before {
+	content: "";
+	width: 0;
+	height: 0;
+	border-top: 4px solid transparent;
+	border-bottom: 4px solid transparent;
+	border-left: 5px solid currentColor;
+	color: var(--ink-faint);
+	transition: transform 120ms ease;
+}
+
+.activity-disclosure[open] > summary::before {
+	transform: rotate(90deg);
+}
+
+.activity-disclosure > summary:hover {
+	color: var(--accent);
+}
+
+.activity-link {
+	width: fit-content;
+	color: var(--ink-soft);
+	font-size: 12.5px;
+	text-decoration-color: var(--rule-strong);
+	text-underline-offset: 3px;
+}
+
+.activity-link:hover {
+	color: var(--accent);
+}
+
+.broker-workspace--history {
+	align-content: start;
+}
+
+.history-filter {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: end;
+	gap: var(--space-2) var(--space-3);
+}
+
+.history-filter label {
+	color: var(--ink-soft);
+	font-size: 12.5px;
+}
+
+.history-filter input {
+	min-height: 34px;
+	padding: 6px 8px;
+	background: var(--panel);
+	border: 1px solid var(--rule-strong);
+	border-radius: var(--radius);
+	color: var(--ink);
+	font: inherit;
+}
+
+.history-filter .button {
+	min-height: 34px;
+}
+
+.history-count {
+	color: var(--ink-faint);
+	font-size: 12px;
+}
+
 body[data-page="settings"] .region--brokers,
 body[data-page="settings"] .region--account,
 body[data-page="settings"] .desk__stream,
@@ -575,13 +663,14 @@ body[data-page="settings"] .desk {
 
 .readings {
 	display: grid;
-	grid-template-columns: minmax(0, 1.3fr) repeat(2, minmax(0, 1fr));
+	grid-template-columns: minmax(0, 1.6fr) repeat(2, minmax(0, 1fr));
 }
 
 .reading {
 	display: grid;
 	gap: var(--space-2);
 	align-content: start;
+	min-width: 0;
 	padding: 0 var(--space-6);
 	border-left: 1px solid var(--rule);
 }
@@ -604,12 +693,14 @@ body[data-page="settings"] .desk {
 	line-height: 1.05;
 	color: var(--ink);
 	transition: color 900ms ease;
+	overflow-wrap: anywhere;
 }
 
 .reading--primary .reading__value {
-	font-size: clamp(34px, 4.2vw, 50px);
+	font-size: clamp(30px, 3.5vw, 42px);
 	font-weight: 500;
 	letter-spacing: -0.015em;
+	white-space: nowrap;
 }
 
 .reading__value[data-sign="pos"] {
@@ -1282,6 +1373,7 @@ td.neg {
 
 	.reading__value,
 	[data-flash].is-changed .reading__value,
+	.activity-disclosure > summary::before,
 	.button,
 	.icon-button {
 		transition: none;

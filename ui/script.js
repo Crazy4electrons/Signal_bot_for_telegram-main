@@ -90,6 +90,9 @@ const els = {
 	brokers: document.getElementById("broker-workspaces"),
 	brokerNotice: document.getElementById("broker-notice"),
 	accountMeta: document.getElementById("account-meta"),
+	historyFilter: document.getElementById("history-filter"),
+	historyFrom: document.getElementById("history-from"),
+	historyTo: document.getElementById("history-to"),
 };
 
 const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
@@ -277,13 +280,32 @@ function renderBrokers() {
 		return;
 	}
 
+	const historyPage = document.body.dataset.page === "history";
 	const structureKey = JSON.stringify(brokerStatuses.map(({ id, name, account_type, configured }) => ({
-		id, name, account_type, configured,
+		id, name, account_type, configured, historyPage,
 	})));
 	if (structureKey !== brokerStructureKey) {
 		els.brokers.innerHTML = brokerStatuses.map((broker) => {
 		const state = broker.connected ? "connected" : broker.configured ? "disconnected" : "missing";
 		const stateLabel = broker.connected ? "Connected" : broker.configured ? "Session saved · not connected" : "Session needed";
+		if (historyPage) {
+			return `
+				<article class="broker-workspace broker-workspace--history" data-broker-panel="${escapeHtml(broker.id)}">
+					<div class="broker-card__head">
+						<div>
+							<h2 class="broker-card__name">${escapeHtml(broker.name)}</h2>
+							<p class="broker-card__account">${escapeHtml(broker.account_type)} account</p>
+						</div>
+						<span class="broker-card__state" data-state="${state}">${stateLabel}</span>
+					</div>
+					<section class="region">
+						<h3 class="region__heading">Closed trades</h3>
+						<p class="region__note">Newest settlement first.</p>
+						<p class="history-count" data-history-count></p>
+						<div class="data" data-activity="closed">Loading&hellip;</div>
+					</section>
+				</article>`;
+		}
 		const captureCommand = `python playwright_scraper.py --broker ${broker.id} --account-type ${broker.account_type} --headed`;
 		const sessionHelp = broker.configured ? "" : `
 			<div class="broker-card__session">
@@ -314,9 +336,20 @@ function renderBrokers() {
 					</dl>
 				</section>
 				<div class="broker-activity">
-					<section class="region"><h3 class="region__heading">Incoming signals</h3><div class="data" data-activity="signals">Loading&hellip;</div></section>
-					<section class="region"><h3 class="region__heading">Open trades</h3><div class="data" data-activity="open">Loading&hellip;</div></section>
-					<section class="region"><h3 class="region__heading">Closed trades</h3><p class="region__note">Newest settlement first.</p><div class="data" data-activity="closed">Loading&hellip;</div></section>
+					<details class="activity-disclosure">
+						<summary>Incoming signals</summary>
+						<div class="data" data-activity="signals">Loading&hellip;</div>
+					</details>
+					<details class="activity-disclosure">
+						<summary>Open trades</summary>
+						<div class="data" data-activity="open">Loading&hellip;</div>
+					</details>
+					<details class="activity-disclosure">
+						<summary>Closed trades</summary>
+						<p class="region__note">Showing five recent settlements.</p>
+						<div class="data" data-activity="closed">Loading&hellip;</div>
+						<a class="activity-link" href="/ui/history.html">View full history</a>
+					</details>
 				</div>
 			</article>`;
 		}).join("");
@@ -334,9 +367,10 @@ function renderBrokers() {
 				? "Session saved · not connected"
 				: "Session needed";
 		const stateElement = panel.querySelector(".broker-card__state");
-		const button = panel.querySelector('[data-broker-action="connect"]');
 		stateElement.textContent = stateLabel;
 		stateElement.dataset.state = state;
+		if (historyPage) continue;
+		const button = panel.querySelector('[data-broker-action="connect"]');
 		button.textContent = broker.connected ? "Refresh connection" : "Connect";
 		button.disabled = !broker.configured || button.getAttribute("aria-busy") === "true";
 	}
@@ -390,7 +424,7 @@ async function updateBalance(brokerId) {
 		const lifespan = panel.querySelector('[data-account="lifespan"]');
 		setTextContent(balance, isNumber(data.balance) ? money.format(data.balance) : displayValue(data.balance));
 		setTextContent(pnl, isNumber(data.P_n_L_day) ? signedMoney.format(data.P_n_L_day) : displayValue(data.P_n_L_day));
-		setTextContent(lifespan, displayValue(data.lifespan));
+		setTextContent(lifespan, isNumber(data.lifespan) ? signedMoney.format(data.lifespan) : displayValue(data.lifespan));
 		if (isNumber(data.P_n_L_day) && data.P_n_L_day !== 0) {
 			pnl.dataset.sign = data.P_n_L_day > 0 ? "pos" : "neg";
 		} else {
@@ -516,14 +550,40 @@ async function updateClosedTrades(brokerId) {
 		const tradeEntries = Array.isArray(data.closed_trades)
 			? data.closed_trades.map((trade, index) => [String(trade.trade_id ?? index), trade])
 			: Object.entries(data.closed_trades || {});
-		const trades = tradeEntries.slice().reverse();
+		const orderedTrades = tradeEntries.slice().reverse();
+		let trades = orderedTrades;
+		if (document.body.dataset.page === "history") {
+			const from = els.historyFrom?.value
+				? `${els.historyFrom.value.replace("T", " ")}:00`
+				: "";
+			const to = els.historyTo?.value
+				? `${els.historyTo.value.replace("T", " ")}:59.999`
+				: "";
+			trades = orderedTrades.filter(([, trade]) => {
+				/* Stored trade times use the desk timezone; compare without browser TZ conversion. */
+				const entryTime = String(trade.trade_details?.entry_time || "")
+					.replace("T", " ")
+					.slice(0, 19);
+				return entryTime && (!from || entryTime >= from) && (!to || entryTime <= to);
+			});
+			const count = brokerPanel(brokerId).querySelector("[data-history-count]");
+			if (count) {
+				count.textContent = `Showing ${trades.length} of ${orderedTrades.length} trades`;
+			}
+		} else {
+			trades = orderedTrades.slice(0, 5);
+		}
 
 		clearFailure(container);
 
 		if (!trades.length) {
 			renderMarkup(container, emptyState(
-				"No trades have settled yet.",
-				"Each trade appears here the moment its result comes back."
+				document.body.dataset.page === "history" && orderedTrades.length
+					? "No trades match this time range."
+					: "No trades have settled yet.",
+				document.body.dataset.page === "history" && orderedTrades.length
+					? "Choose a wider range or clear the filters."
+					: "Each trade appears here the moment its result comes back."
 			), "empty:closed");
 			return;
 		}
@@ -1255,7 +1315,8 @@ async function refreshAll() {
 
 	let brokerStatusFailed = false;
 	let results;
-	if (document.body.dataset.page === "settings") {
+	const page = document.body.dataset.page;
+	if (page === "settings") {
 		results = await Promise.allSettled([updateRiskData(), updateChannels()]);
 	} else {
 		try {
@@ -1267,7 +1328,11 @@ async function refreshAll() {
 		}
 		results = brokerStatusFailed
 			? []
-			: await Promise.allSettled(BROKER_IDS.map(updateBrokerData));
+			: await Promise.allSettled(
+				page === "history"
+					? BROKER_IDS.map(updateClosedTrades)
+					: BROKER_IDS.map(updateBrokerData)
+			);
 	}
 
 	refreshing = false;
@@ -1385,6 +1450,7 @@ document.addEventListener("DOMContentLoaded", () => {
 	});
 
 	const settingsPage = document.body.dataset.page === "settings";
+	const historyPage = document.body.dataset.page === "history";
 	if (settingsPage) {
 		els.openForm.addEventListener("click", () => openRiskEditor("global"));
 		els.openBrokerRiskForm.addEventListener("click", () => openRiskEditor("quotex"));
@@ -1415,6 +1481,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
 		els.channelModal.addEventListener("click", (event) => {
 			if (event.target === els.channelModal) showchannelform();
+		});
+	} else if (historyPage) {
+		els.historyFilter?.addEventListener("submit", (event) => {
+			event.preventDefault();
+			refreshAll();
+		});
+		els.historyFilter?.addEventListener("reset", () => {
+			window.setTimeout(refreshAll);
 		});
 	} else {
 		els.brokers.addEventListener("click", (event) => {

@@ -15,12 +15,12 @@ from .base import Broker, TradePlacement
 @dataclass
 class QuotexBroker(Broker):
     broker_id: str = "quotex"
-    # Use the persistent browser profile for authorization; fork login is optional.
+    # Prefer the saved SSID; use the browser profile only to refresh rejected auth.
     ssid: str | None = None
     is_demo: bool = True
     regions: list[str] | None = None
     use_browser_session: bool = True
-    browser_headless: bool = False
+    browser_headless: bool = True
     browser_auth_timeout: int = 120
 
     _client: AsyncQuotexClient | None = field(default=None, init=False, repr=False)
@@ -74,7 +74,7 @@ class QuotexBroker(Broker):
             keep_alive = self._client._keep_alive_manager
             websocket = getattr(keep_alive, "_websocket", None)
             auth_error = getattr(websocket, "_last_auth_error", None)
-            if auth_error or (self.use_browser_session and self.ssid):
+            if auth_error:
                 account_type = "DEMO" if self.is_demo else "REAL"
                 if self.use_browser_session:
                     await self._client.disconnect()

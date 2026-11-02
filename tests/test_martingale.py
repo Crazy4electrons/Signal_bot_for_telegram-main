@@ -93,6 +93,10 @@ def test_loss_places_multiplier_recovery_and_win_closes_sequence(isolated_state,
     assert result is True
     assert [(placement["amount"], placement["direction"]) for placement in broker.placements] == [(2.0, "CALL")]
     assert main.closed_trades["initial"]["trade_details"]["result"] == "Loss"
+    assert main.closed_trades["initial"]["from_server"] == {
+        "result": "loss",
+        "amount": 1.0,
+    }
     assert main.closed_trades["recovery"]["trade_details"]["result"] == "Won"
     assert main.closed_trades["recovery"]["trade_details"]["amount"] == 2.0
     assert main.trade_details == {}
@@ -121,6 +125,40 @@ def test_unknown_result_does_not_report_win_or_place_recovery(isolated_state, mo
     assert result is False
     assert main.closed_trades["initial"]["trade_details"]["result"] == "Unknown"
     assert main.trade_details == {}
+
+
+def test_final_martingale_loss_records_actual_stake(isolated_state, monkeypatch):
+    class FakeBroker:
+        async def check_result(self, _trade_id):
+            return {"result": "loss", "pnl": -8.0}
+
+    trade = _trade()
+    trade.trade_details.amount = 8.0
+    trade.trade_details.level = 3
+    risk = main.RISK_MANAGEMENT(
+        martingale_levels=3,
+        martingale_multiplier=2.0,
+    )
+    pnl = []
+    monkeypatch.setattr(main, "effective_risk_management", lambda _broker_id: risk)
+    monkeypatch.setattr(
+        main, "ensure_broker_connected", lambda _broker_id: _async_value(FakeBroker())
+    )
+    monkeypatch.setattr(main, "trade_details", {trade.trade_id: trade.trade_details})
+    monkeypatch.setattr(main, "closed_trades", {})
+    monkeypatch.setattr(
+        main,
+        "record_broker_pnl",
+        lambda broker_id, amount, _event_id=None: pnl.append((broker_id, amount)),
+    )
+
+    result = asyncio.run(main.manage_martingale(trade))
+
+    closed = main.closed_trades[trade.trade_id]["trade_details"]
+    assert result is False
+    assert closed["amount"] == 8.0
+    assert closed["level"] == 3
+    assert pnl == [("quotex", -8.0)]
 
 
 def test_draw_is_not_treated_as_a_loss_or_win(isolated_state, monkeypatch):

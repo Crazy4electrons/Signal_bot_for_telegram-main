@@ -20,6 +20,7 @@ from playwright_scraper import (
     _quotex_profile_path,
     _extract_csrf_form,
     _has_quotex_browser_auth,
+    _is_quotex_cloudflare_challenge,
     _is_quotex_trade_page,
     _listen_for_quotex_authorization,
     _quotex_authorization_ssid,
@@ -75,6 +76,32 @@ def test_quotex_trade_page_guard_rejects_wrong_account_route() -> None:
     assert not _is_quotex_trade_page("https://quotex.com/en/trade/", is_demo=True)
     assert _is_quotex_trade_page("https://quotex.com/en/trade/", is_demo=False)
     assert not _is_quotex_trade_page("https://quotex.com/en/demo-trade/", is_demo=False)
+
+
+def test_quotex_cloudflare_challenge_is_detected() -> None:
+    class FakePage:
+        def __init__(self, state):
+            self.state = state
+
+        async def evaluate(self, _script):
+            return self.state
+
+    async def run_test() -> None:
+        blocked_page = FakePage({
+            "title": "Just a moment...",
+            "text": "Performing security verification",
+            "challengeFrame": False,
+        })
+        normal_page = FakePage({
+            "title": "Sign in",
+            "text": "Email Password",
+            "challengeFrame": False,
+        })
+
+        assert await _is_quotex_cloudflare_challenge(blocked_page)
+        assert not await _is_quotex_cloudflare_challenge(normal_page)
+
+    asyncio.run(run_test())
 
 
 def test_quotex_authorization_parser_preserves_canonical_demo_frame() -> None:

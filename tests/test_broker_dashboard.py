@@ -136,13 +136,26 @@ def test_quotex_uses_existing_browser_profile_by_default(monkeypatch):
     monkeypatch.delenv("QUOTEX_BROWSER_SESSION", raising=False)
     monkeypatch.delenv("QUOTEX_BROWSER_HEADLESS", raising=False)
     monkeypatch.delenv("QUOTEX_BROWSER_AUTH_TIMEOUT", raising=False)
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
 
     broker = asyncio.run(main.get_or_create_broker("quotex"))
 
     assert broker.ssid is None
     assert broker.use_browser_session is True
-    assert broker.browser_headless is False
+    assert broker.browser_headless is True
     assert broker.browser_auth_timeout == 120
+
+
+def test_quotex_uses_visible_browser_by_default_when_display_is_available(monkeypatch):
+    monkeypatch.setattr(main, "broker_registry", {})
+    monkeypatch.delenv("QUOTEX_BROWSER_HEADLESS", raising=False)
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+
+    broker = asyncio.run(main.get_or_create_broker("quotex"))
+
+    assert broker.browser_headless is False
 
 
 def test_quotex_uses_saved_ssid_then_refreshes_after_auth_rejection(monkeypatch):
@@ -180,6 +193,38 @@ def test_quotex_uses_saved_ssid_then_refreshes_after_auth_rejection(monkeypatch)
     assert asyncio.run(broker.connect()) is True
     assert used_ssids == [stale_ssid, "fresh-session"]
     assert broker.ssid == "fresh-session"
+
+
+def test_quotex_keeps_saved_ssid_when_connection_fails_without_auth_rejection(monkeypatch):
+    saved_ssid = '42["authorization",{"session":"saved","isDemo":1,"tournamentId":0}]'
+    used_ssids = []
+
+    class FakeClient:
+        def __init__(self, *, ssid, **_kwargs):
+            used_ssids.append(ssid)
+            self._keep_alive_manager = SimpleNamespace(
+                _websocket=SimpleNamespace(_last_auth_error=None)
+            )
+
+        async def connect(self, **_kwargs):
+            return False
+
+        async def disconnect(self):
+            pass
+
+    class FakeBrowserSession:
+        is_started = False
+
+        async def start(self):
+            pytest.fail("Browser auth should not replace a saved SSID without rejection")
+
+    monkeypatch.setattr("brokers.quotex.AsyncQuotexClient", FakeClient)
+    broker = QuotexBroker(ssid=saved_ssid, is_demo=True)
+    broker._browser_session = FakeBrowserSession()
+
+    assert asyncio.run(broker.connect()) is False
+    assert used_ssids == [saved_ssid]
+    assert broker.ssid == saved_ssid
 
 
 def test_quotex_can_opt_out_of_existing_browser_profile(monkeypatch):
@@ -463,6 +508,68 @@ def test_current_signals_hide_completed_and_failed_sequences(tmp_path, monkeypat
     }["completed-sequence"] == "completed"
 
 
+def test_current_signals_expire_past_entries_beyond_sequence_age(tmp_path, monkeypatch):
+    store = main.SignalBotStateStore(tmp_path / "state.sqlite3")
+    monkeypatch.setattr(main, "runtime_state", store)
+    monkeypatch.setattr(main, "trade_details", {})
+    monkeypatch.setattr(
+        main,
+        "effective_risk_management",
+        lambda _broker_id: main.RISK_MANAGEMENT(stale_sequence_seconds=60),
+    )
+    payload = main.SIGNAL_FIELDS(
+        signal_provider="alpha",
+        asset="EURUSD",
+        direction="CALL",
+        entry_time=main.datetime.now() - main.timedelta(seconds=61),
+        broker_id="quotex",
+    ).model_dump(mode="json")
+    store.save_signal("expired-signal", "needs_review", payload)
+
+    response = response_body(asyncio.run(main.get_current_signals("quotex")))
+
+    assert response["signals"] == []
+    assert store.recent_signals()[0]["status"] == "expired"
+
+
+def test_current_signals_do_not_expire_a_signal_with_an_active_trade(tmp_path, monkeypatch):
+    store = main.SignalBotStateStore(tmp_path / "state.sqlite3")
+    monkeypatch.setattr(main, "runtime_state", store)
+    entry_time = main.datetime.now() - main.timedelta(seconds=61)
+    payload = main.SIGNAL_FIELDS(
+        signal_provider="alpha",
+        asset="EURUSD",
+        direction="CALL",
+        entry_time=entry_time,
+        broker_id="quotex",
+        signal_id="active-signal",
+    ).model_dump(mode="json")
+    store.save_signal("active-signal", "placed", payload)
+    monkeypatch.setattr(
+        main,
+        "trade_details",
+        {
+            "active-trade": main.TRADE_FIELDS(
+                **payload,
+                level=0,
+                open_price=1.0,
+                amount=1.0,
+                signal_id="active-signal",
+            )
+        },
+    )
+    monkeypatch.setattr(
+        main,
+        "effective_risk_management",
+        lambda _broker_id: main.RISK_MANAGEMENT(stale_sequence_seconds=60),
+    )
+
+    response = response_body(asyncio.run(main.get_current_signals("quotex")))
+
+    assert [signal["signal_id"] for signal in response["signals"]] == ["active-signal"]
+    assert store.recent_signals()[0]["status"] == "placed"
+
+
 def test_signal_without_explicit_broker_has_no_fallback(monkeypatch):
     monkeypatch.setattr(main, "signal_router", None)
     signal = main.SIGNAL_FIELDS(
@@ -560,6 +667,76 @@ def test_telegram_channel_settings_override_signal_metadata(tmp_path, monkeypatc
     assert signal.signal_details.channel_key == "configured-source"
     assert signal.signal_details.entry_time.hour == 12
     assert signal.signal_details.entry_time.minute == 10
+
+
+@pytest.mark.parametrize(
+    ("current_local", "entry_time", "expected_local"),
+    [
+        (main.datetime(2025, 1, 2, 1, 0), "08:30", None),
+        (main.datetime(2025, 1, 2, 3, 0), "23:00", (2025, 1, 2, 4, 0)),
+    ],
+)
+def test_time_only_telegram_signal_uses_channel_date_and_skips_past_before_saving(
+    tmp_path, monkeypatch, current_local, entry_time, expected_local
+):
+    store = main.SignalBotStateStore(tmp_path / "signal_bot.sqlite3")
+    monkeypatch.setattr(main, "runtime_state", store)
+    monkeypatch.setattr(
+        main,
+        "risk_management",
+        main.RISK_MANAGEMENT(local_timezone="Etc/GMT-2"),
+    )
+    monkeypatch.setattr(main, "Signals", {})
+
+    class FixedDateTime(main.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            fixed = cls(
+                current_local.year,
+                current_local.month,
+                current_local.day,
+                current_local.hour,
+                current_local.minute,
+            )
+            return tz.localize(fixed) if tz else fixed
+
+    monkeypatch.setattr(main, "datetime", FixedDateTime)
+    monkeypatch.setattr(main, "random", lambda: 0)
+    monkeypatch.setattr(
+        main,
+        "parse_macrodroid_trade_data",
+        lambda _text: {
+            "asset": "GBPNZD",
+            "direction": "PUT",
+            "time": entry_time,
+            "signal_provider": "telegram",
+            "timezone": "Etc/GMT+3",
+            "broker": None,
+            "channel": None,
+        },
+    )
+    channel = main.ChannelConfig(
+        channel="@signals",
+        name="configured-source",
+        timezone="Etc/GMT+3",
+        broker="quotex",
+    )
+
+    signal = asyncio.run(main.parse_signal("signal", channel_config=channel))
+
+    if expected_local is None:
+        assert signal is None
+        assert store.recent_signals() == []
+        assert main.Signals == {}
+    else:
+        assert signal is not None
+        assert (
+            signal.signal_details.entry_time.year,
+            signal.signal_details.entry_time.month,
+            signal.signal_details.entry_time.day,
+            signal.signal_details.entry_time.hour,
+            signal.signal_details.entry_time.minute,
+        ) == expected_local
 
 
 def test_channel_routes_are_keyed_by_id_and_label():

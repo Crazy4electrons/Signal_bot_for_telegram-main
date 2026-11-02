@@ -507,7 +507,13 @@ async def get_or_create_broker(broker_id: str) -> Any:
         browser_session = os.getenv("QUOTEX_BROWSER_SESSION", "true").strip().lower() in {
             "1", "true", "yes", "on",
         }
-        browser_headless = os.getenv("QUOTEX_BROWSER_HEADLESS", "false").strip().lower() in {
+        default_browser_headless = not bool(
+            os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY")
+        )
+        browser_headless = os.getenv(
+            "QUOTEX_BROWSER_HEADLESS",
+            str(default_browser_headless),
+        ).strip().lower() in {
             "1", "true", "yes", "on",
         }
         browser_auth_timeout = int(os.getenv("QUOTEX_BROWSER_AUTH_TIMEOUT", "120"))
@@ -1172,12 +1178,29 @@ async def get_current_signals(broker_id: str):
     broker_id = normalise_broker_id(broker_id)
     signal_list = []
     active_statuses = ("pending", "placing", "placed", "needs_review")
+    protected_signal_ids = {
+        details.signal_id
+        for details in trade_details.values()
+        if details.broker_id == broker_id and details.signal_id
+    }
     for signal in get_runtime_state().recent_signals(
-        limit=50,
+        limit=1000,
         statuses=active_statuses,
     ):
         if signal.get("broker_id") != broker_id:
             continue
+        if signal["signal_id"] not in protected_signal_ids:
+            risk = effective_risk_management(broker_id)
+            entry_time = datetime.fromisoformat(signal["entry_time"])
+            signal_timezone = pytz.timezone(str(risk.local_timezone))
+            if entry_time.tzinfo is None:
+                entry_time = signal_timezone.localize(entry_time)
+            age = (
+                datetime.now(signal_timezone) - entry_time.astimezone(signal_timezone)
+            ).total_seconds()
+            if age > sequence_max_age_seconds(risk):
+                get_runtime_state().set_signal_status(signal["signal_id"], "expired")
+                continue
         signal_list.append(signal)
         if len(signal_list) == 20:
             break
@@ -1472,17 +1495,10 @@ async def parse_signal(
     SIGNAL_TIMEZONE = pytz.timezone(str(timezone))
     try:
         signal_time_obj = datetime.strptime(entryTime, "%H:%M").time()
-        signal_dt_in_signal_tz = SIGNAL_TIMEZONE.localize(datetime(current_local_dt.year, current_local_dt.month, current_local_dt.day,signal_time_obj.hour, signal_time_obj.minute, 0))        
-        # Check if local time is before 6 AM
-        signal_tz_number = int(timezone[-2:])
-        logger.info(f"signal_tz_number: {timezone}")
-        local_tz_number = int(risk_management.local_timezone[-2:])
-        minTimezone = min(signal_tz_number,local_tz_number)
-        maxTimezone = max(signal_tz_number,local_tz_number)
-        rangeTimezone = range(minTimezone,maxTimezone)
-        logger.info(f"local_tz_number: {len(rangeTimezone)}")
-        if current_local_dt.hour < len(rangeTimezone):
-            signal_dt_in_signal_tz = signal_dt_in_signal_tz - timedelta(days=1)
+        current_signal_dt = current_local_dt.astimezone(SIGNAL_TIMEZONE)
+        signal_dt_in_signal_tz = SIGNAL_TIMEZONE.localize(
+            datetime.combine(current_signal_dt.date(), signal_time_obj)
+        )
         target_local_dt = signal_dt_in_signal_tz.astimezone(LOCAL_TIMEZONE)
     except (Exception, KeyboardInterrupt) as e:
         logger.error(f"Error parsing or converting signal entry time '{entryTime}': {e}", exc_info=True)
@@ -1501,8 +1517,20 @@ async def parse_signal(
         }
     
     signal_data = SIGNAL(**data)
-    
-    logger.info(f"New signal received:{asset_name_for_po} {direction}. Initiating a new trade sequence. Initial Amount: ${risk_management.initial_amount}")    
+
+    if current_local_dt > target_local_dt + timedelta(seconds=1):
+        logger.warning(
+            "Signal for %s %s (Entry: %s) arrived late. Current local time: %s, "
+            "Target local time: %s. Skipping trade.",
+            asset_name_for_po,
+            direction,
+            entryTime,
+            current_local_dt.strftime("%d-%m-%Y %H:%M:%S"),
+            target_local_dt.strftime("%d-%m-%Y %H:%M:%S"),
+        )
+        return None
+
+    logger.info(f"New signal received:{asset_name_for_po} {direction}. Initiating a new trade sequence. Initial Amount: ${risk_management.initial_amount}")
     try:
         if signal_data.signal_id not in Signals:
             await asyncio.sleep(random() * 10)  # Small delay to ensure proper logging order
@@ -1524,12 +1552,6 @@ async def parse_signal(
     except (Exception,KeyboardInterrupt) as e:
             logger.error(f"Error placing trade for {signal_data.signal_details.asset} {signal_data.signal_details.direction}: {e}", exc_info=True)
             del signal_data
-    if current_local_dt > target_local_dt + timedelta(seconds=1): # Allow a small buffer for late signals, e.g., up to 5 seconds past target entry time.
-            logger.warning(f"Signal for {asset_name_for_po} {direction} (Entry: {entryTime}) arrived late. "
-                       f"Current local time: {current_local_dt.strftime('%d-%m-%Y %H:%M:%S')}, Target local time: {target_local_dt.strftime('%d-%m-%Y %H:%M:%S')}. "
-                       f"Skipping trade.")
-            Signals.pop(signal_data.signal_id)
-            return None
     return signal_data
     
 async def take_trade(signal:SIGNAL):
@@ -1704,7 +1726,7 @@ async def manage_martingale(trade:TRADE)-> bool:
                     current_trade,
                     "Loss",
                     result_details,
-                    amount=current_trade.amount / risk.martingale_multiplier,
+                    amount=current_trade.amount,
                     level=current_trade.level - 1,
                 ),
                 signal_id=current_trade.signal_id,
@@ -1808,7 +1830,7 @@ async def manage_martingale(trade:TRADE)-> bool:
         closed_payload = trade_history_payload(
             current_trade,
             "Loss",
-            {},
+            result_details,
             amount=current_trade.amount / risk.martingale_multiplier,
             level=current_trade.level - 1,
         )
