@@ -49,6 +49,9 @@ DEFAULT_CHANNELS_COMMENT = (
 # Only Etc/GMT offsets are usable: main.py reads the numeric offset from the
 # last characters of the string, so a named zone would raise on every signal.
 ETC_TIMEZONE = re.compile(r"^Etc/GMT([+-])(\d{1,2})$")
+REPLAY_OVERLAP_MESSAGES = 100
+RECONNECT_INITIAL_DELAY_SECONDS = 5
+RECONNECT_MAX_DELAY_SECONDS = 60
 
 
 @dataclass(frozen=True)
@@ -363,6 +366,13 @@ class TelegramSignalListener:
                 "received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "
                 "PRIMARY KEY(channel, message_id))"
             )
+            self.last_message_ids = {
+                channel: message_id
+                for channel, message_id in connection.execute(
+                    "SELECT channel, MAX(message_id) FROM telegram_messages GROUP BY channel"
+                )
+                if message_id is not None
+            }
 
     def _claim_message(self, channel_key: str, message_id: int) -> bool:
         with sqlite3.connect(self.state_path) as connection:
@@ -378,21 +388,45 @@ class TelegramSignalListener:
         body = channel[1:] if channel.startswith("-") else channel
         return int(channel) if body.isdigit() else channel
 
+    async def _process_message(self, config: ChannelConfig, message: Any) -> None:
+        message_id = int(message.id)
+        if not self._claim_message(config.channel, message_id):
+            logger.debug(
+                "Ignoring already processed Telegram message %s from %s",
+                message_id,
+                config.key,
+            )
+            return
+        self.last_message_ids[config.channel] = max(
+            message_id, self.last_message_ids.get(config.channel, 0)
+        )
+        await self.callback(
+            message.message or "",
+            f"telegram:{config.key}:{message_id}",
+            config,
+        )
+
     def _make_handler(self, config: ChannelConfig):
         async def handle_message(event: Any) -> None:
-            message_id = int(event.message.id)
-            if not self._claim_message(config.channel, message_id):
-                logger.info(
-                    "Ignoring already processed Telegram message %s from %s",
-                    message_id,
-                    config.key,
-                )
-                return
-            text = event.message.message or ""
-            self.last_message_ids[config.channel] = message_id
-            await self.callback(text, f"telegram:{config.key}:{message_id}", config)
+            await self._process_message(config, event.message)
 
         return handle_message
+
+    async def _catch_up_recent_messages(self) -> None:
+        """Replay a small overlap so missed Telegram updates are deduplicated and recovered."""
+        if not self.client:
+            return
+        for config in self.channels:
+            last_message_id = self.last_message_ids.get(config.channel)
+            if last_message_id is None:
+                continue
+            minimum_id = max(0, last_message_id - REPLAY_OVERLAP_MESSAGES)
+            async for message in self.client.iter_messages(
+                self._chat_filter(config.channel),
+                min_id=minimum_id,
+                reverse=True,
+            ):
+                await self._process_message(config, message)
 
     def status(self) -> list[dict[str, Any]]:
         """Per-channel state, surfaced by the /health endpoint."""
@@ -408,33 +442,45 @@ class TelegramSignalListener:
         ]
 
     async def run(self) -> None:
-        """Connect and process new posts until cancelled."""
+        """Connect and process new posts, retrying after transient failures."""
         if TelegramClient is None or events is None:
             raise RuntimeError("Direct Telegram support requires the 'telethon' package")
 
-        self.client = TelegramClient(self.session_path, self.api_id, self.api_hash)
-        for config in self.channels:
-            self.client.on(events.NewMessage(chats=self._chat_filter(config.channel)))(
-                self._make_handler(config)
-            )
+        retry_delay = RECONNECT_INITIAL_DELAY_SECONDS
+        while True:
+            self.client = TelegramClient(self.session_path, self.api_id, self.api_hash)
+            for config in self.channels:
+                self.client.on(events.NewMessage(chats=self._chat_filter(config.channel)))(
+                    self._make_handler(config)
+                )
 
-        try:
-            await self.client.start()
-            logger.info(
-                "Telegram listener connected to %d channel(s): %s",
-                len(self.channels),
-                ", ".join(config.key for config in self.channels),
+            try:
+                await self.client.start()
+                self.last_error = None
+                logger.info(
+                    "Telegram listener connected to %d channel(s): %s",
+                    len(self.channels),
+                    ", ".join(config.key for config in self.channels),
+                )
+                await self._catch_up_recent_messages()
+                await self.client.run_until_disconnected()
+                self.last_error = "Telegram client disconnected"
+                logger.warning("Telegram client disconnected; reconnecting")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self.last_error = str(exc)
+                logger.exception("Telegram listener stopped; reconnecting")
+            finally:
+                if self.client:
+                    await self.client.disconnect()
+
+            logger.info("Retrying Telegram listener in %s seconds", retry_delay)
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(
+                retry_delay * 2,
+                RECONNECT_MAX_DELAY_SECONDS,
             )
-            await self.client.run_until_disconnected()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            self.last_error = str(exc)
-            logger.exception("Telegram listener stopped")
-            raise
-        finally:
-            if self.client:
-                await self.client.disconnect()
 
     async def stop(self) -> None:
         if self.client:

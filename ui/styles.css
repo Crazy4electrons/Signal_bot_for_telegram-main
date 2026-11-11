@@ -1118,9 +1118,69 @@ td.neg {
 }
 
 .field label {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
 	font-size: 12.5px;
 	font-weight: 500;
 	color: var(--ink);
+}
+
+.field__help {
+	position: relative;
+	display: none;
+	flex: 0 0 auto;
+	width: 16px;
+	height: 16px;
+	place-items: center;
+	border: 1px solid var(--rule-strong);
+	border-radius: 50%;
+	color: var(--ink-faint);
+	font-size: 10px;
+	line-height: 1;
+	cursor: help;
+}
+
+.field__help::before {
+	content: "?";
+}
+
+.risk-form--broker .field__help {
+	display: inline-grid;
+}
+
+.field__help::after {
+	position: absolute;
+	z-index: 20;
+	bottom: calc(100% + 7px);
+	left: 0;
+	width: max-content;
+	max-width: min(18rem, 76vw);
+	padding: 8px 10px;
+	background: var(--ink);
+	border: 1px solid var(--rule-strong);
+	border-radius: var(--radius);
+	color: var(--panel);
+	content: attr(data-tooltip);
+	font-size: 12px;
+	font-weight: 400;
+	line-height: 1.4;
+	white-space: normal;
+	box-shadow: 0 5px 16px rgb(0 0 0 / 0.22);
+	opacity: 0;
+	pointer-events: none;
+	visibility: hidden;
+}
+
+.risk-form--broker .field__help:hover::after,
+.risk-form--broker .field__help:focus-visible::after {
+	opacity: 1;
+	visibility: visible;
+}
+
+.field__help:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
 }
 
 .field input {

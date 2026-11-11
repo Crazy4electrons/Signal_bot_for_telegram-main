@@ -76,6 +76,7 @@ const els = {
 	openForm: document.getElementById("set-risk-button"),
 	openBrokerRiskForm: document.getElementById("set-broker-risk-button"),
 	cancelForm: document.getElementById("cancel-risk-button"),
+	clearBrokerOverrides: document.getElementById("clear-broker-overrides-button"),
 	channels: document.getElementById("channels-result"),
 	channelNote: document.getElementById("channels-problems"),
 	addChannel: document.getElementById("add-channel-button"),
@@ -791,6 +792,8 @@ function prefillRiskForm() {
 		? globalProfile ? String(lastRiskSettings.global.martingale_enabled) : ""
 		: String(values.martingale_enabled);
 	els.riskGlobalTimezone.hidden = !globalProfile;
+	els.form.classList.toggle("risk-form--broker", !globalProfile);
+	els.clearBrokerOverrides.hidden = globalProfile;
 	els.form.elements.namedItem("local_timezone").required = globalProfile;
 	for (const field of RISK_NUMBER_FIELDS) {
 		els.form.elements.namedItem(field).required = globalProfile;
@@ -936,6 +939,54 @@ async function handleRiskSubmit(event) {
 			submit.removeAttribute("aria-busy");
 			submit.textContent = originalLabel;
 		}
+	}
+}
+
+async function clearBrokerOverrides() {
+	if (riskEditorProfile === "global") return;
+	const profileName = riskEditorProfile === "quotex" ? "Quotex" : "Pocket Option";
+	if (!window.confirm(
+		`Clear ${profileName} overrides? It will use the current global risk limits.`
+	)) return;
+
+	const button = els.clearBrokerOverrides;
+	button.disabled = true;
+	button.setAttribute("aria-busy", "true");
+	try {
+		const response = await fetch(
+			`/risk_management/brokers/${encodeURIComponent(riskEditorProfile)}`,
+			{
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: "{}",
+			},
+		);
+		if (!response.ok) {
+			let detail = `The bot couldn't clear these overrides (HTTP ${response.status}).`;
+			try {
+				const body = await response.json();
+				if (typeof body.detail === "string") detail = body.detail;
+			} catch (error) {
+				/* Not JSON: keep the status message. */
+			}
+			showFormError(detail);
+			return;
+		}
+
+		clearFormError();
+		els.form.reset();
+		showriskform();
+		try {
+			await updateRiskData();
+		} catch (error) {
+			/* The risk rail shows its own error state. */
+		}
+	} catch (error) {
+		showFormError("Couldn't reach the bot, so these overrides were not cleared.");
+		console.error("Error clearing broker risk overrides:", error);
+	} finally {
+		button.disabled = false;
+		button.removeAttribute("aria-busy");
 	}
 }
 
@@ -1455,6 +1506,7 @@ document.addEventListener("DOMContentLoaded", () => {
 		els.openForm.addEventListener("click", () => openRiskEditor("global"));
 		els.openBrokerRiskForm.addEventListener("click", () => openRiskEditor("quotex"));
 		els.cancelForm.addEventListener("click", showriskform);
+		els.clearBrokerOverrides.addEventListener("click", clearBrokerOverrides);
 		els.form.addEventListener("submit", handleRiskSubmit);
 		els.riskProfile.addEventListener("change", () => {
 			riskEditorProfile = els.riskProfile.value;

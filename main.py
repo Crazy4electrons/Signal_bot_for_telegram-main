@@ -1046,6 +1046,7 @@ async def health() -> JSONResponse:
             "telegram_listener_connected": bool(
                 telegram_listener and telegram_listener.client and telegram_listener.client.is_connected()
             ),
+            "telegram_listener_error": telegram_listener.last_error if telegram_listener else None,
             "telegram_channels": telegram_listener.status() if telegram_listener else [],
             "telegram_channel_problems": (
                 telegram_listener.channel_problems if telegram_listener else []

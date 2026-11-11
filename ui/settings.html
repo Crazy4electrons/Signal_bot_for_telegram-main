@@ -183,28 +183,44 @@
 				</div>
 
 				<div class="field">
-					<label for="initial_amount-input">Initial amount</label>
+					<label for="initial_amount-input">Initial amount
+						<span class="field__help" tabindex="0" role="img"
+							aria-label="Starting stake for a new trade sequence."
+							data-tooltip="Starting stake for a new trade sequence."></span>
+					</label>
 					<input type="number" inputmode="decimal" min="0.01" step="any" id="initial_amount-input"
 						name="initial_amount" required />
 					<p class="field__hint">The first stake of every sequence.</p>
 				</div>
 
 				<div class="field">
-					<label for="martingale_levels-input">Martingale levels</label>
+					<label for="martingale_levels-input">Martingale levels
+						<span class="field__help" tabindex="0" role="img"
+							aria-label="Maximum number of recovery trades after the first trade."
+							data-tooltip="Maximum number of recovery trades after the first trade."></span>
+					</label>
 					<input type="number" inputmode="numeric" min="0" step="1" id="martingale_levels-input"
 						name="martingale_levels" required />
 					<p class="field__hint">Recovery legs allowed after a loss. Zero ends the sequence instead.</p>
 				</div>
 
 				<div class="field">
-					<label for="martingale_multiplier-input">Martingale multiplier</label>
+					<label for="martingale_multiplier-input">Martingale multiplier
+						<span class="field__help" tabindex="0" role="img"
+							aria-label="Each recovery stake is multiplied by this value."
+							data-tooltip="Each recovery stake is multiplied by this value."></span>
+					</label>
 					<input type="number" inputmode="decimal" min="1" step="any" id="martingale_multiplier-input"
 						name="martingale_multiplier" required />
 					<p class="field__hint">Each leg stakes this many times the leg before it.</p>
 				</div>
 
 				<div class="field">
-					<label for="timeframe-input">Trade duration (seconds)</label>
+					<label for="timeframe-input">Trade duration (seconds)
+						<span class="field__help" tabindex="0" role="img"
+							aria-label="How long each trade stays open before its result is checked."
+							data-tooltip="How long each trade stays open before its result is checked."></span>
+					</label>
 					<input type="number" inputmode="numeric" min="1" step="any" id="timeframe-input" name="timeframe"
 						required />
 					<p class="field__hint">How long each trade stays open.</p>
@@ -219,14 +235,22 @@
 				</div>
 
 				<div class="field">
-					<label for="drawback_threshold-input">Drawback threshold</label>
+					<label for="drawback_threshold-input">Drawback threshold
+						<span class="field__help" tabindex="0" role="img"
+							aria-label="Stop new trades when this broker's daily profit and loss reaches this loss."
+							data-tooltip="Stop new trades when this broker's daily profit and loss reaches this loss."></span>
+					</label>
 					<input type="number" inputmode="decimal" min="1" step="1" id="drawback_threshold-input"
 						name="drawback_threshold" required />
 					<p class="field__hint">Halt the bot once today&rsquo;s P/L falls this far below zero.</p>
 				</div>
 
 				<div class="field">
-					<label for="martingale_enabled-input">Recovery trades</label>
+					<label for="martingale_enabled-input">Recovery trades
+						<span class="field__help" tabindex="0" role="img"
+							aria-label="Choose whether the bot places recovery trades after losses."
+							data-tooltip="Choose whether the bot places recovery trades after losses."></span>
+					</label>
 					<select id="martingale_enabled-input" name="martingale_enabled">
 						<option value="">Inherit global</option>
 						<option value="true">Enabled</option>
@@ -235,41 +259,72 @@
 				</div>
 
 				<div class="field">
-					<label for="max_trade_amount-input">Maximum trade amount</label>
+					<label for="max_trade_amount-input">Maximum trade amount
+						<span class="field__help" tabindex="0" role="img"
+							aria-label="Largest stake allowed for any single trade; recovery legs above it are stopped."
+							data-tooltip="Largest stake allowed for any single trade; recovery legs above it are stopped."></span>
+					</label>
 					<input type="number" min="0.01" step="any" id="max_trade_amount-input" name="max_trade_amount" />
 				</div>
 
 				<div class="field">
-					<label for="max_sequence_exposure-input">Maximum sequence exposure</label>
+					<label for="max_sequence_exposure-input">Maximum sequence exposure
+						<span class="field__help" tabindex="0" role="img"
+							aria-label="Largest combined stake across the full recovery ladder; lower caps prevent the sequence from starting."
+							data-tooltip="Largest combined stake across the full recovery ladder; lower caps prevent the sequence from starting."></span>
+					</label>
 					<input type="number" min="0.01" step="any" id="max_sequence_exposure-input" name="max_sequence_exposure" />
 				</div>
 
 				<div class="field">
-					<label for="max_open_trades-input">Maximum open sequences</label>
+					<label for="max_open_trades-input">Maximum open sequences
+						<span class="field__help" tabindex="0" role="img"
+							aria-label="Maximum number of active trade sequences on this broker."
+							data-tooltip="Maximum number of active trade sequences on this broker."></span>
+					</label>
 					<input type="number" min="1" step="1" id="max_open_trades-input" name="max_open_trades" />
 				</div>
 
 				<div class="field">
-					<label for="max_open_trades_per_asset-input">Maximum per asset</label>
+					<label for="max_open_trades_per_asset-input">Maximum per asset
+						<span class="field__help" tabindex="0" role="img"
+							aria-label="Maximum active sequences on the same asset. Zero disables this limit."
+							data-tooltip="Maximum active sequences on the same asset. Zero disables this limit."></span>
+					</label>
 					<input type="number" min="0" step="1" id="max_open_trades_per_asset-input" name="max_open_trades_per_asset" />
 				</div>
 
 				<div class="field">
-					<label for="max_open_trades_per_provider-input">Maximum per provider</label>
+					<label for="max_open_trades_per_provider-input">Maximum per provider
+						<span class="field__help" tabindex="0" role="img"
+							aria-label="Maximum active sequences from one signal provider. Zero disables this limit."
+							data-tooltip="Maximum active sequences from one signal provider. Zero disables this limit."></span>
+					</label>
 					<input type="number" min="0" step="1" id="max_open_trades_per_provider-input" name="max_open_trades_per_provider" />
 				</div>
 
 				<div class="field">
-					<label for="stale_sequence_seconds-input">Stale sequence timeout (seconds)</label>
+					<label for="stale_sequence_seconds-input">Stale sequence timeout (seconds)
+						<span class="field__help" tabindex="0" role="img"
+							aria-label="Release an active sequence after this many seconds. Zero calculates the timeout from the trade settings."
+							data-tooltip="Release an active sequence after this many seconds. Zero calculates the timeout from the trade settings."></span>
+					</label>
 					<input type="number" min="0" step="1" id="stale_sequence_seconds-input" name="stale_sequence_seconds" />
 				</div>
 
 				<div class="field">
-					<label for="min_balance_reserve-input">Minimum balance reserve</label>
+					<label for="min_balance_reserve-input">Minimum balance reserve
+						<span class="field__help" tabindex="0" role="img"
+							aria-label="Keep at least this much balance available after the initial stake."
+							data-tooltip="Keep at least this much balance available after the initial stake."></span>
+					</label>
 					<input type="number" min="0" step="any" id="min_balance_reserve-input" name="min_balance_reserve" />
 				</div>
 
 				<div class="modal__actions">
+					<button class="button button--quiet" type="button" id="clear-broker-overrides-button" hidden>
+						Clear broker overrides
+					</button>
 					<button class="button button--quiet" type="button" id="cancel-risk-button">Cancel</button>
 					<button class="button" type="submit">Save limits</button>
 				</div>
