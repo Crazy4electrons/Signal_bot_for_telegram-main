@@ -76,6 +76,9 @@ class QueueMiddleware(BaseHTTPMiddleware):
         self._worker_task: asyncio.Task | None = None
 
     async def dispatch(self, request: Request, call_next: Callable):
+        if request.url.path == "/health":
+            return await call_next(request)
+
         # start worker lazily on first request (safe for startup ordering)
         if self._worker_task is None or self._worker_task.done():
             self._worker_task = asyncio.create_task(self._worker())
@@ -92,10 +95,19 @@ class QueueMiddleware(BaseHTTPMiddleware):
         while True:
             call_next, request, response_future = await self._queue.get()
             try:
-                # call_next(request) returns a coroutine that yields a Response when awaited
-                response = await call_next(request)
+                async with asyncio.timeout(30):
+                    response = await call_next(request)
                 if not response_future.cancelled():
                     response_future.set_result(response)
+            except TimeoutError:
+                logger.error("HTTP request timed out while processing %s", request.url.path)
+                if not response_future.cancelled():
+                    response_future.set_result(
+                        JSONResponse(
+                            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                            content={"detail": "Request timed out"},
+                        )
+                    )
             except Exception as e:
                 if not response_future.cancelled():
                     response_future.set_exception(e)
@@ -157,8 +169,14 @@ trade_details:dict = {}
 closed_trades:dict = {}
 telegram_listener: TelegramSignalListener | None = None
 telegram_listener_task: asyncio.Task | None = None
+broker_monitor_task: asyncio.Task | None = None
 api: PocketOptionAsync | None = None
 broker_connected = False
+broker_reconnect_lock = asyncio.Lock()
+BROKER_BALANCE_TIMEOUT_SECONDS = 10
+BROKER_RECONNECT_TIMEOUT_SECONDS = 20
+BROKER_ORDER_TIMEOUT_SECONDS = 20
+BROKER_HEALTH_CHECK_INTERVAL_SECONDS = 30
 
 # Shared secret guarding POST /trade_signal. Required whenever the endpoint is
 # reachable from the public internet (tunnel, ngrok, or a relay).
@@ -292,6 +310,77 @@ def to_float(value: Any, default: float = 0.0) -> float:
 
 def risk_rejection(reason: str) -> None:
     logger.warning("Trade rejected by risk controls: %s", reason)
+
+
+async def ensure_broker_connection() -> bool:
+    """Verify the broker socket and replace the client if its connection died."""
+    global api, broker_connected
+
+    if api is None:
+        broker_connected = False
+        return False
+
+    async with broker_reconnect_lock:
+        current_api = api
+        try:
+            if broker_connected and current_api.is_connected():
+                async with asyncio.timeout(BROKER_BALANCE_TIMEOUT_SECONDS):
+                    balance = to_float(await current_api.balance())
+                account_details.balance = balance
+                return True
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("Pocket Option connection check failed: %s", exc)
+
+        ssid = os.getenv("ssid")
+        if not ssid:
+            broker_connected = False
+            logger.error("Cannot recreate Pocket Option client: SSID is not configured.")
+            return False
+
+        try:
+            replacement = PocketOptionAsync(ssid)
+            async with asyncio.timeout(BROKER_BALANCE_TIMEOUT_SECONDS):
+                balance = to_float(await replacement.balance())
+            api = replacement
+            account_details.balance = balance
+            broker_connected = True
+            logger.info(
+                "Pocket Option connection restored with a fresh client; balance check succeeded."
+            )
+            if current_api is not replacement:
+                try:
+                    async with asyncio.timeout(BROKER_RECONNECT_TIMEOUT_SECONDS):
+                        await current_api.disconnect()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.warning("Could not close the previous Pocket Option client: %s", exc)
+            return True
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            broker_connected = False
+            logger.error("Could not create a replacement Pocket Option client: %s", exc)
+            return False
+
+
+async def monitor_broker_connection() -> None:
+    """Periodically detect stale broker sockets and recover the connection."""
+    delay = BROKER_HEALTH_CHECK_INTERVAL_SECONDS
+    while True:
+        await asyncio.sleep(delay)
+        try:
+            if await ensure_broker_connection():
+                delay = BROKER_HEALTH_CHECK_INTERVAL_SECONDS
+            else:
+                delay = min(delay * 2, 300)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Unexpected error while monitoring Pocket Option")
+            delay = min(delay * 2, 300)
 
 
 def active_sequences(exclude_trade_id: str | None = None) -> list[TRADE_FIELDS]:
@@ -444,8 +533,10 @@ async def handle_telegram_signal(
     if signal:
         logger.info("Accepted Telegram signal %s from %s", signal.signal_id, source_id)
         await take_trade(signal)
+    elif signal is None:
+        logger.debug("Ignoring non-signal Telegram post %s", source_id)
     else:
-        logger.warning("Rejected Telegram signal from %s", source_id)
+        logger.warning("Rejected malformed Telegram signal from %s", source_id)
 
 
 async def restart_telegram_listener() -> tuple[bool, str]:
@@ -498,7 +589,7 @@ def timezone_choices() -> list[dict[str, str]]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    global api,account_details,risk_management,telegram_listener,telegram_listener_task,broker_connected
+    global api,account_details,risk_management,telegram_listener,telegram_listener_task,broker_monitor_task,broker_connected
     ensure_webhook_secret()
     #connect client
     ssid = os.getenv("ssid")
@@ -521,30 +612,46 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         api = PocketOptionAsync(ssid) #type: ignore
         await asyncio.sleep(5)
-        for _ in range(3):
-            logger.info(f"${api}")
-            balance = await api.balance()
-            if balance:
-                logger.info("FastAPI lifespan startup event: Connected to Pocket Option client.")
+        for attempt in range(3):
+            try:
+                async with asyncio.timeout(BROKER_BALANCE_TIMEOUT_SECONDS):
+                    balance = to_float(await api.balance())
                 broker_connected = True
-                logger.info(f"Startup Balance: {balance}")
-                logger.info(f"\n\n\n== Risk management values == \n - Initial entry amount: ${risk_management.initial_amount}\n - max martingale level: {risk_management.martingale_levels}\n - Martingale multiplier: {risk_management.martingale_multiplier}\n - drawback threshol: {risk_management.drawback_threshold}\n - Timeframe: {risk_management.timeframe}\n\n-----use POST : /set_risk_management to change settings \n\n") #type: ignore
-                account_details = ACCOUNT_DETAILS(balance=balance,P_n_L_day= 0,lifespan=0)
+                account_details = ACCOUNT_DETAILS(balance=balance, P_n_L_day=0, lifespan=0)
+                logger.info("FastAPI lifespan startup event: Connected to Pocket Option client.")
+                logger.info("Startup Balance: %s", balance)
+                logger.info(
+                    "Active risk configuration: %s",
+                    risk_management.model_dump(),
+                )
                 break
-            else:
-                logger.error("FastAPI lifespan startup event: Failed to connect to Pocket Option client.")
-                logger.info("Attempting to reconnect...")
-                if _ >= 3:
-                    logger.error("Failed to reconnect to Pocket Option client after 3 attempts.")
-                    return
-                await api.reconnect() #type: ignore
-            await asyncio.sleep(5)
-    except Exception or KeyboardInterrupt as e:
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                broker_connected = False
+                logger.warning(
+                    "Pocket Option startup connection attempt %s/3 failed: %s",
+                    attempt + 1,
+                    exc,
+                )
+                if attempt < 2:
+                    try:
+                        async with asyncio.timeout(BROKER_RECONNECT_TIMEOUT_SECONDS):
+                            await api.reconnect()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.exception("Pocket Option reconnect attempt failed")
+                    await asyncio.sleep(2)
+        if not broker_connected:
+            logger.error("Pocket Option is unavailable; Telegram signals will be monitored without trading.")
+    except Exception as e:
         logger.error(f"Failed to connect to Pocket Option client: {e}", exc_info=True)
         broker_connected = False
         yield
         return   
-    asyncio.create_task(reset_P_n_L_day()) 
+    asyncio.create_task(reset_P_n_L_day())
+    broker_monitor_task = asyncio.create_task(monitor_broker_connection())
     telegram_listener = TelegramSignalListener.from_environment(handle_telegram_signal)
     if telegram_listener:
         telegram_listener_task = asyncio.create_task(telegram_listener.run())
@@ -554,6 +661,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await telegram_listener.stop()
     if telegram_listener_task:
         telegram_listener_task.cancel()
+    if broker_monitor_task:
+        broker_monitor_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await broker_monitor_task
     if api is not None:
         await api.disconnect()
     broker_connected = False
@@ -585,11 +696,17 @@ app.add_middleware(NoCacheUiMiddleware)
 
 @app.get("/health")
 async def health() -> JSONResponse:
+    connected = False
+    if api is not None:
+        try:
+            connected = broker_connected and api.is_connected()
+        except Exception:
+            connected = False
     return JSONResponse(
         status_code=status.HTTP_200_OK,
         content={
             "status": "ok",
-            "broker_connected": broker_connected,
+            "broker_connected": connected,
             "telegram_listener_enabled": telegram_listener is not None,
             "telegram_listener_connected": bool(
                 telegram_listener and telegram_listener.client and telegram_listener.client.is_connected()
@@ -633,29 +750,32 @@ async def ui_styles():
 
 @app.get("/account_details", response_class=JSONResponse)
 async def get_account_details():
-    global api,account_details
-    balance = None
-    try:
-        balance = to_float(await api.balance())
-        if balance <= 0:
-            for retries in range(10):
-                await api.reconnect()
-                balance = to_float(await api.balance())
-                if balance > 0:
-                    break
-                if retries == 9:
-                    logger.error("Failed to reconnect and get a valid balance after 10 attempts.")
-        account_details.balance = balance
-    except Exception as e:
-        balance = "fetch failed"
+    global account_details
+    if not await ensure_broker_connection():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Pocket Option is unavailable",
+        )
     P_n_L_day = account_details.P_n_L_day
-    lifespan  = account_details.lifespan
-    jsonResponse = JSONResponse(status_code= status.HTTP_200_OK,content={"balance": balance,"P_n_L_day": P_n_L_day, "lifespan": lifespan})
+    lifespan = account_details.lifespan
+    jsonResponse = JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "balance": account_details.balance,
+            "P_n_L_day": P_n_L_day,
+            "lifespan": lifespan,
+        },
+    )
     return jsonResponse
 
 @app.get("/open_trades", response_class=JSONResponse)
 async def get_open_trades():
     global api,risk_management,trade_details
+    if not await ensure_broker_connection():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Pocket Option is unavailable",
+        )
     # Ensure integer values are passed to get_candles (period and offset must be ints)
         
     try:
@@ -834,6 +954,7 @@ async def set_channels(request: Request) -> JSONResponse:
 
 @app.post("/trade_signal")
 async def trade_signal_webhook(request: Request):
+    global broker_connected
     # Defensive read: MacroDroid can abort the POST before the body is
     # fully transferred, which makes request.body() raise ClientDisconnect.
     try:
@@ -864,7 +985,14 @@ async def trade_signal_webhook(request: Request):
             content={"message": "Broker client is not connected; signal not processed."},
         )
 
-    account_details.balance = to_float(await api.balance())
+    if not await ensure_broker_connection():
+        webhook_stats["rejected"] += 1
+        webhook_stats["last_result"] = "broker_unavailable"
+        logger.error("Rejecting signal because Pocket Option is unavailable.")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"message": "Pocket Option is unavailable; signal not processed."},
+        )
     if account_details.P_n_L_day <= risk_management.drawback_threshold:
         webhook_stats["rejected"] += 1
         webhook_stats["last_result"] = "drawdown_halt"
@@ -888,13 +1016,31 @@ async def trade_signal_webhook(request: Request):
     return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Trade signal received and processed successfully."})
     
 # Helper functions
-async def parse_signal(text:str = "")->SIGNAL|bool:
+async def parse_signal(text:str = "")->SIGNAL|bool|None:
     global risk_management,Signals
     #parse signal data
     parsed_data = parse_macrodroid_trade_data(text)
-    logger.info(f"Parsed trade data: {parsed_data}")  
-    if not parsed_data.get("asset") or not parsed_data.get("direction") or not parsed_data.get("time") or not parsed_data.get("signal_provider") or not parsed_data.get("timezone"):
-        logger.error("Failed to parse essential trade data (asset, direction, entry time, signal provider, or timezone) from notification. Aborting trade attempt.")
+    if not any(parsed_data.get(field) for field in ("asset", "direction", "time")):
+        logger.debug("Ignoring Telegram post without trade fields.")
+        return None
+
+    logger.info("Parsed trade data: %s", parsed_data)
+    missing_fields = [
+        label
+        for field, label in (
+            ("asset", "asset"),
+            ("direction", "direction"),
+            ("time", "entry time"),
+            ("signal_provider", "signal provider"),
+            ("timezone", "timezone"),
+        )
+        if not parsed_data.get(field)
+    ]
+    if missing_fields:
+        logger.warning(
+            "Incomplete trade notification; missing %s.",
+            ", ".join(missing_fields),
+        )
         return False
     #assign parsed data to variables
     asset_name_for_po = parsed_data["asset"]
@@ -912,17 +1058,10 @@ async def parse_signal(text:str = "")->SIGNAL|bool:
     SIGNAL_TIMEZONE = pytz.timezone(str(timezone))
     try:
         signal_time_obj = datetime.strptime(entryTime, "%H:%M").time()
-        signal_dt_in_signal_tz = SIGNAL_TIMEZONE.localize(datetime(current_local_dt.year, current_local_dt.month, current_local_dt.day,signal_time_obj.hour, signal_time_obj.minute, 0))        
-        # Check if local time is before 6 AM
-        signal_tz_number = int(timezone[-2:])
-        logger.info(f"signal_tz_number: {timezone}")
-        local_tz_number = int(risk_management.local_timezone[-2:])
-        minTimezone = min(signal_tz_number,local_tz_number)
-        maxTimezone = max(signal_tz_number,local_tz_number)
-        rangeTimezone = range(minTimezone,maxTimezone)
-        logger.info(f"local_tz_number: {len(rangeTimezone)}")
-        if current_local_dt.hour < len(rangeTimezone):
-            signal_dt_in_signal_tz = signal_dt_in_signal_tz - timedelta(days=1)
+        current_signal_dt = current_local_dt.astimezone(SIGNAL_TIMEZONE)
+        signal_dt_in_signal_tz = SIGNAL_TIMEZONE.localize(
+            datetime.combine(current_signal_dt.date(), signal_time_obj)
+        )
         target_local_dt = signal_dt_in_signal_tz.astimezone(LOCAL_TIMEZONE)
     except (Exception, KeyboardInterrupt) as e:
         logger.error(f"Error parsing or converting signal entry time '{entryTime}': {e}", exc_info=True)
@@ -960,7 +1099,7 @@ async def parse_signal(text:str = "")->SIGNAL|bool:
     return signal_data
     
 async def take_trade(signal:SIGNAL):
-    global risk_management,api,trade_details,Signals
+    global risk_management,api,trade_details,Signals,broker_connected
         # Place the initial trade
     current_local_dt = datetime.now(pytz.timezone(str(risk_management.local_timezone)))
     active_trade_id: str | None = None
@@ -978,27 +1117,43 @@ async def take_trade(signal:SIGNAL):
             await asyncio.sleep(time_to_wait_seconds)
         else:
             logger.info(f"Signal arrived exactly at or slightly past target entry time ({current_local_dt.strftime('%H:%M:%S')} vs {signal_data.entry_time.strftime('%H:%M:%S')}). Placing trade immediately.")        
+        if not await ensure_broker_connection():
+            logger.error(
+                "Skipping %s trade for %s: Pocket Option is unavailable.",
+                signal_data.direction,
+                signal_data.asset,
+            )
+            Signals.pop(signal.signal_id, None)
+            return
         try:
             signal_direction = signal_data.direction
             broker_asset = signal_data.asset if signal_data.asset.lower().endswith("_otc") else f"{signal_data.asset}_otc"
-            if signal_direction.upper() == "BUY" or signal_direction.upper() == "CALL": #type: ignore
-                (buy_id, Details) = await api.buy(
-                    asset=broker_asset,
-                    amount= risk_management.initial_amount, 
-                    time= risk_management.timeframe,
-                    check_win=False )
-            elif signal_direction.upper() == "SELL" or signal_direction.upper() == "PUT":
-                (buy_id, Details) = await api.sell(
-                    asset=broker_asset,
-                    amount= risk_management.initial_amount, 
-                    time= risk_management.timeframe, 
-                    check_win=False )
-            else:
-                raise ValueError(f"Unsupported trade direction: {signal_direction!r}")
+            async with asyncio.timeout(BROKER_ORDER_TIMEOUT_SECONDS):
+                if signal_direction.upper() == "BUY" or signal_direction.upper() == "CALL": #type: ignore
+                    (buy_id, Details) = await api.buy(
+                        asset=broker_asset,
+                        amount= risk_management.initial_amount,
+                        time= risk_management.timeframe,
+                        check_win=False )
+                elif signal_direction.upper() == "SELL" or signal_direction.upper() == "PUT":
+                    (buy_id, Details) = await api.sell(
+                        asset=broker_asset,
+                        amount= risk_management.initial_amount,
+                        time= risk_management.timeframe,
+                        check_win=False )
+                else:
+                    raise ValueError(f"Unsupported trade direction: {signal_direction!r}")
         except (Exception,KeyboardInterrupt) as e:
+            try:
+                broker_connected = api is not None and api.is_connected()
+            except Exception:
+                broker_connected = False
             logger.error(
                 "Error placing %s trade for %s at %s: %s",
                 signal_data.direction, broker_asset, signal_data.entry_time, e, exc_info=True,
+            )
+            logger.warning(
+                "The order outcome may be unknown; it will not be retried automatically to avoid duplicate trades."
             )
             Signals.pop(signal.signal_id, None)
             return
